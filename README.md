@@ -64,12 +64,17 @@ mkdir -p ~/ros_ws
 cd ~/ros_ws
 ```
 
+本仿真器不再维护自己的依赖清单。rmoss 系列源码依赖与机器人描述包
+（`ats_robot_description`）统一由 ATS 工作区根清单导入到 `src/dependencies`
+与 `src/ats_robot_description`；若再导入嵌套清单，会解析出第二份
+`rmoss_interfaces`/`sdformat_tools`。
+
 ```bash
-git clone https://github.com/SMBU-PolarBear-Robotics-Team/rmu_gazebo_simulator.git src/rmu_gazebo_simulator
+git clone https://github.com/liukong1220/ATS_2026_snetry_test.git ats_ws
 ```
 
 ```bash
-vcs import src < src/rmu_gazebo_simulator/dependencies.repos
+vcs import --recursive ats_ws < ats_ws/dependencies.repos
 ```
 
 #### 2.2.3 Build
@@ -142,9 +147,12 @@ python3 src/rmu_gazebo_simulator/rmu_gazebo_simulator/scripts/referee_web/main.p
 
 ## 配套导航仿真仓库
 
-- 2025 SMBU PolarBear Sentry Navigation
+- ATS 2026 哨兵导航（本工作区主链）
 
-    [pb2025_sentry_nav](https://github.com/SMBU-PolarBear-Robotics-Team/pb2025_sentry_nav.git)
+    机器人描述由 `ats_robot_description` 提供，仿真接入入口见
+    [ats_gazebo_nav.launch.py](./rmu_gazebo_simulator/launch/ats_gazebo_nav.launch.py)。
+
+- SMBU PolarBear Sentry Navigation（上游算法参考，非本工作区主链）
 
     ![cmu_nav_v1_0](https://raw.githubusercontent.com/LihanChen2004/picx-images-hosting/master/spin_nav.1ove3nw63o.gif)
 

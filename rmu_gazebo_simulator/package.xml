@@ -8,6 +8,10 @@
 	<license>Apache-2.0</license>
 
 	<buildtool_depend>ament_cmake</buildtool_depend>
+	<!-- CMakeLists.txt calls find_package(ament_cmake_auto). It resolved
+	     transitively before this package built anything, but the C++ bridge
+	     target below makes the dependency load-bearing. -->
+	<buildtool_depend>ament_cmake_auto</buildtool_depend>
 
 	<exec_depend>ament_index_python</exec_depend>
 	<exec_depend>launch</exec_depend>
@@ -15,6 +19,33 @@
 	<exec_depend>robot_state_publisher</exec_depend>
 	<exec_depend>xacro</exec_depend>
 	<exec_depend>nav2_common</exec_depend>
+
+	<!-- ATS bridge nodes under scripts/ats_bridge. -->
+	<exec_depend>rclpy</exec_depend>
+	<exec_depend>std_msgs</exec_depend>
+	<depend>geometry_msgs</depend>
+	<depend>nav_msgs</depend>
+	<exec_depend>sensor_msgs_py</exec_depend>
+	<depend>manda_can_control</depend>
+
+	<!-- src/gz_livox_bridge.cpp needs these headers at build time, so they
+	     cannot stay exec_depend: ament_auto_find_build_dependencies() only
+	     find_package()s build-visible dependencies. -->
+		<depend>rclcpp</depend>
+		<depend>rclcpp_action</depend>
+		<depend>rosgraph_msgs</depend>
+	<depend>sensor_msgs</depend>
+	<depend>ats_navigation_interfaces</depend>
+	<depend>livox_ros_driver2</depend>
+	<!-- Ignition packages are located explicitly in CMakeLists.txt. Keeping
+	     these as build/exec pairs avoids ament_auto loading ignition-gazebo6
+	     twice through its transitive JSONCPP discovery. -->
+	<build_depend>ignition-gazebo6</build_depend>
+	<exec_depend>ignition-gazebo6</exec_depend>
+	<build_depend>ignition-msgs8</build_depend>
+	<exec_depend>ignition-msgs8</exec_depend>
+	<build_depend>ignition-transport11</build_depend>
+	<exec_depend>ignition-transport11</exec_depend>
 
 	<depend>ros_gz_sim</depend>
 	<depend>ros_gz_bridge</depend>
@@ -25,7 +56,7 @@
 	<depend>rmoss_gz_plugins</depend>
 	<depend>rmoss_gz_resources</depend>
 	<depend>rmoss_gz_bridge</depend>
-	<depend>pb2025_robot_description</depend>
+	<depend>ats_robot_description</depend>
 	<depend>sdformat_tools</depend>
 
   <test_depend>ament_lint_auto</test_depend>

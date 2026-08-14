@@ -23,7 +23,9 @@
 
     <light type='directional' name='direct_light'>
       <visualize>false</visualize>
-      <cast_shadows>true</cast_shadows>
+      <!-- Shadows do not affect collision or GPU-lidar range geometry in the
+           headless navigation profile, but consume the same render budget. -->
+      <cast_shadows>false</cast_shadows>
       <pose>14.6 7.9 10 0 0 0</pose>
       <diffuse>1.0 1.0 1.0 1</diffuse>
       <specular>0.5 0.5 0.5 1</specular>

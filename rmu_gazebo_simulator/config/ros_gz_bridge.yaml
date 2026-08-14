@@ -1,4 +1,16 @@
-# mecanum plugin odometry
+# Chassis actuator command: ROS -> GZ into the SwerveDrive4WS plugin.
+# The only ROS-side publisher of this topic is gz_chassis_cmd_adapter, which in
+# turn is the only subscriber of /cmd_vel_mpc. Do not add a second publisher:
+# the chain requires a single owner between MPC and the chassis.
+- ros_topic_name: "/<robot_name>/cmd_vel"
+  gz_topic_name: "/<robot_name>/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "ignition.msgs.Twist"
+  direction: "ROS_TO_GZ"
+
+# Chassis ground-truth odometry published by the drivetrain plugin.
+# Test-only: evaluation of endpoint error and contact telemetry. It must never
+# be remapped onto /localization, which stays owned by the Point-LIO chain.
 - ros_topic_name: "/<robot_name>/chassis_odometry_gt"
   gz_topic_name: "/<robot_name>/odometry"
   ros_type_name: "nav_msgs/msg/Odometry"

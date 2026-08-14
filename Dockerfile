@@ -19,10 +19,17 @@ RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg --output /usr/share/
     apt-get install -y ignition-fortress
 
 # create workspace
+#
+# The simulator no longer carries its own dependency manifest: every rmoss
+# source dependency and the robot description are owned by the ATS workspace
+# root manifest (<workspace>/dependencies.repos), which imports them into
+# src/dependencies and src/ats_robot_description. Importing the nested manifest
+# here would resolve a second copy of rmoss_interfaces/sdformat_tools.
 RUN mkdir -p ~/ros_ws && \
     cd ~/ros_ws && \
-    git clone https://github.com/SMBU-PolarBear-Robotics-Team/rmu_gazebo_simulator.git src/rmu_gazebo_simulator && \
-    vcs import --recursive src < src/rmu_gazebo_simulator/dependencies.repos
+    git clone https://github.com/liukong1220/ATS_2026_snetry_test.git ats_ws && \
+    vcs import --recursive ats_ws < ats_ws/dependencies.repos && \
+    cp -r ats_ws/src ./src
 
 WORKDIR /root/ros_ws
 

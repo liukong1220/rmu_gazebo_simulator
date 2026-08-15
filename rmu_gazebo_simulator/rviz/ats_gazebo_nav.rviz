@@ -4,9 +4,15 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
+        - /Global Map and Planning1
+        - /ROGMap Local Quality1
         - /ATS Paths1
       Splitter Ratio: 0.8
     Tree Height: 880
+  - Class: rviz_common/Tool Properties
+    Expanded: ~
+    Name: Tool Properties
+    Splitter Ratio: 0.5
 Visualization Manager:
   Class: ""
   Displays:
@@ -40,80 +46,238 @@ Visualization Manager:
         {}
       Update Interval: 0
       Value: true
-    - Alpha: 0.55
-      Class: rviz_default_plugins/Map
-      Color Scheme: map
-      Draw Behind: true
+    - Class: rviz_common/Group
+      Displays:
+        # This is the PGM world model. It remains independent from the
+        # robot-centred ROGMap diagnostic volume below.
+        - Alpha: 0.55
+          Class: rviz_default_plugins/Map
+          Color Scheme: map
+          Draw Behind: true
+          Enabled: true
+          Name: Static PGM Map
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /map
+          Update Topic:
+            Value: /map_updates
+          Use Timestamp: false
+          Value: true
+        # Terrain is a source to the fusion adapter. It is intentionally a
+        # separate layer from the final planning grid so map quality is visible.
+        - Alpha: 0.32
+          Class: rviz_default_plugins/Map
+          Color Scheme: costmap
+          Draw Behind: false
+          Enabled: true
+          Name: Traversability Grid
+          Topic:
+            Depth: 2
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /traversability_grid
+          Use Timestamp: false
+          Value: true
+        # The one authoritative 2.5D grid consumed by JPS/MINCO in this profile.
+        - Alpha: 0.12
+          Class: rviz_default_plugins/Map
+          Color Scheme: costmap
+          Draw Behind: false
+          Enabled: true
+          Name: ROGMap Fusion Planning Grid
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /rc_esdf/planning_grid
+          Update Topic:
+            Value: /rc_esdf/planning_grid_updates
+          Use Timestamp: false
+          Value: true
+        # Visualization only. These grids never feed back into the numerical
+        # projection service or planning snapshot.
+        - Alpha: 0.45
+          Class: rviz_default_plugins/Map
+          Color Scheme: costmap
+          Draw Behind: false
+          Enabled: false
+          Name: Signed Distance Debug
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /rc_esdf/signed_distance_grid
+          Use Timestamp: false
+          Value: false
+        - Alpha: 0.45
+          Class: rviz_default_plugins/Map
+          Color Scheme: costmap
+          Draw Behind: false
+          Enabled: false
+          Name: Footprint Clearance Debug
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /rc_esdf/footprint_clearance_grid
+          Use Timestamp: false
+          Value: false
       Enabled: true
-      Name: Static Map
-      Topic:
-        Depth: 1
-        Durability Policy: Transient Local
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /map
-      Update Topic:
-        Value: /map_updates
-      Use Timestamp: false
-      Value: true
-    - Alpha: 0.18
-      Class: rviz_default_plugins/Map
-      Color Scheme: costmap
-      Draw Behind: false
+      Name: Global Map and Planning
+    - Class: rviz_common/Group
+      Displays:
+        # The registered scan is the Point-LIO output consumed by ROGMap.
+        # ROGMap voxel state is the default local-quality layer. The raw scan
+        # is available below but starts disabled so software-rendered RViz does
+        # not compete with Gazebo/Point-LIO for every incoming cloud.
+        - Alpha: 0.65
+          Autocompute Intensity Bounds: true
+          Class: rviz_default_plugins/PointCloud2
+          Color: 200; 200; 200
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: false
+          Name: Registered Scan
+          Position Transformer: XYZ
+          Selectable: false
+          Size (Pixels): 3
+          Size (m): 0.02
+          Style: Points
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /registered_scan
+          Use Fixed Frame: true
+          Value: false
+        # RGB voxel state and bounds share ROGMap's bounded local visualization
+        # box. They are diagnostic-only and do not alter map/planner ownership.
+        - Alpha: 0.35
+          Autocompute Intensity Bounds: true
+          Class: rviz_default_plugins/PointCloud2
+          Color Transformer: RGB8
+          Decay Time: 0
+          Enabled: true
+          Name: ROGMap Local Voxel State (debug only)
+          Position Transformer: XYZ
+          Selectable: false
+          Size (Pixels): 3
+          Size (m): 0.04
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /rog_map/viz
+          Use Fixed Frame: true
+          Value: true
+        - Alpha: 1
+          Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: ROGMap Bounds (orange local, purple visualization, green update)
+          Namespaces:
+            {}
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /rog_map/bounds
+          Value: true
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 0; 0
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: false
+          Name: ROGMap Occupied
+          Position Transformer: XYZ
+          Selectable: false
+          Size (Pixels): 3
+          Size (m): 0.08
+          Style: Boxes
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /rog_map/occ
+          Use Fixed Frame: true
+          Value: false
+        - Alpha: 0.45
+          Autocompute Intensity Bounds: true
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 145; 0
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: false
+          Name: ROGMap Inflated Occupancy
+          Position Transformer: XYZ
+          Selectable: false
+          Size (Pixels): 3
+          Size (m): 0.08
+          Style: Boxes
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /rog_map/inf_occ
+          Use Fixed Frame: true
+          Value: false
+        - Alpha: 0.35
+          Autocompute Intensity Bounds: true
+          Class: rviz_default_plugins/PointCloud2
+          Color: 128; 128; 128
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: false
+          Name: ROGMap Unknown
+          Position Transformer: XYZ
+          Selectable: false
+          Size (Pixels): 3
+          Size (m): 0.08
+          Style: Boxes
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /rog_map/unk
+          Use Fixed Frame: true
+          Value: false
+        - Alpha: 0.65
+          Autocompute Intensity Bounds: true
+          Class: rviz_default_plugins/PointCloud2
+          Color Transformer: Intensity
+          Decay Time: 0
+          Enabled: false
+          Name: ROGMap ESDF Debug (display only)
+          Position Transformer: XYZ
+          Selectable: false
+          Size (Pixels): 3
+          Size (m): 0.05
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /rog_map/esdf
+          Use Fixed Frame: true
+          Value: false
       Enabled: true
-      Name: Planning Grid
-      Topic:
-        Depth: 1
-        Durability Policy: Transient Local
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /rc_esdf/planning_grid
-      Update Topic:
-        Value: /rc_esdf/planning_grid_updates
-      Use Timestamp: false
-      Value: true
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Class: rviz_default_plugins/PointCloud2
-      Color: 200; 200; 200
-      Color Transformer: FlatColor
-      Decay Time: 0
-      Enabled: true
-      Name: Registered Scan
-      Position Transformer: XYZ
-      Selectable: false
-      Size (Pixels): 3
-      Size (m): 0.03
-      Style: Points
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /registered_scan
-      Use Fixed Frame: true
-      Value: true
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Class: rviz_default_plugins/PointCloud2
-      Color: 255; 80; 80
-      Color Transformer: FlatColor
-      Decay Time: 0
-      Enabled: false
-      Name: ROGMap Inflated Occupancy
-      Position Transformer: XYZ
-      Selectable: false
-      Size (Pixels): 3
-      Size (m): 0.05
-      Style: Boxes
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /rog_map/inf_occ
-      Use Fixed Frame: true
-      Value: false
+      Name: ROGMap Local Quality
     - Class: rviz_common/Group
       Displays:
         # 1. JPS global search path: discrete search result, light blue.
@@ -126,12 +290,12 @@ Visualization Manager:
           Head Length: 0
           Length: 0.3
           Line Style: Lines
-          Line Width: 0.07
+          Line Width: 0.16
           Name: 1 JPS Global Path
           Offset:
             X: 0
             Y: 0
-            Z: 0.03
+            Z: 0.45
           Pose Style: None
           Radius: 0.03
           Shaft Diameter: 0
@@ -153,12 +317,12 @@ Visualization Manager:
           Head Length: 0
           Length: 0.3
           Line Style: Lines
-          Line Width: 0.08
+          Line Width: 0.18
           Name: 2 MINCO Reference Path
           Offset:
             X: 0
             Y: 0
-            Z: 0.05
+            Z: 0.55
           Pose Style: None
           Radius: 0.03
           Shaft Diameter: 0
@@ -180,12 +344,12 @@ Visualization Manager:
           Head Length: 0
           Length: 0.3
           Line Style: Billboards
-          Line Width: 0.08
+          Line Width: 0.16
           Name: 3 MPC Predicted Path
           Offset:
             X: 0
             Y: 0
-            Z: 0.07
+            Z: 0.65
           Pose Style: None
           Radius: 0.03
           Shaft Diameter: 0
@@ -208,12 +372,12 @@ Visualization Manager:
           Head Length: 0
           Length: 0.3
           Line Style: Billboards
-          Line Width: 0.09
+          Line Width: 0.20
           Name: 4 MPC Executed Path
           Offset:
             X: 0
             Y: 0
-            Z: 0.09
+            Z: 0.75
           Pose Style: None
           Radius: 0.03
           Shaft Diameter: 0
@@ -243,14 +407,26 @@ Visualization Manager:
   Global Options:
     Background Color: 48; 48; 48
     Fixed Frame: odom
-    Frame Rate: 30
+    Frame Rate: 15
   Name: root
   Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/FocusCamera
     - Class: rviz_default_plugins/Measure
       Line color: 128; 128; 0
+    # 2D Goal Pose publishes geometry_msgs/PoseStamped to the existing
+    # ats_goal_manager input. The manager validates frame/map health and owns
+    # preemption, planning dispatch, emergency stop and command lifecycle.
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /goal_pose
   Transformation:
     Current:
       Class: rviz_default_plugins/TF
@@ -267,7 +443,7 @@ Views:
     Invert Z Axis: false
     Name: Current View
     Near Clip Distance: 0.009999999776482582
-    Scale: 30
+    Scale: 18
     Target Frame: <Fixed Frame>
     Value: TopDownOrtho (rviz_default_plugins)
     X: 0

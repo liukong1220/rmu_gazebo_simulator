@@ -46,6 +46,7 @@ ament_auto_add_executable(ats_navigation_health_probe
 ament_auto_add_executable(ats_navigation_evidence_recorder
   src/ats_navigation_evidence_recorder.cpp
 )
+target_include_directories(ats_navigation_evidence_recorder PRIVATE include)
 
 # This isolated test client owns the action it cancels after the first actual
 # MPC command. It is never launched by the normal simulation profile.
@@ -85,6 +86,13 @@ if(BUILD_TESTING)
   target_compile_features(test_swerve_kinematics PRIVATE cxx_std_17)
   target_include_directories(test_swerve_kinematics PRIVATE include)
   add_test(NAME test_swerve_kinematics COMMAND test_swerve_kinematics)
+
+  add_executable(test_evidence_statistics
+    tests/test_evidence_statistics.cpp
+  )
+  target_compile_features(test_evidence_statistics PRIVATE cxx_std_17)
+  target_include_directories(test_evidence_statistics PRIVATE include)
+  add_test(NAME test_evidence_statistics COMMAND test_evidence_statistics)
 
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()

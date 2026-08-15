@@ -35,42 +35,33 @@
 #include <vector>
 
 #include <ats_navigation_interfaces/msg/planning_map_status.hpp>
+#include <ats_navigation_interfaces/msg/localization_status.hpp>
+#include <builtin_interfaces/msg/time.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <manda_can_control/msg/motion_ctrl.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rosgraph_msgs/msg/clock.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <tf2/exceptions.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+
+#include "rmu_gazebo_simulator/evidence_statistics.hpp"
 
 namespace
 {
 
-using SteadyClock = std::chrono::steady_clock;
-using SteadyTime = SteadyClock::time_point;
+using rmu_gazebo_simulator::EvidenceStatistics;
+using rmu_gazebo_simulator::SteadyClock;
+using rmu_gazebo_simulator::SteadyTime;
 
 struct PoseSample
 {
   double x{0.0};
   double y{0.0};
   double z{0.0};
-};
-
-struct ArrivalStatistics
-{
-  std::size_t samples{0};
-  std::optional<SteadyTime> previous_receipt;
-  std::vector<double> wall_intervals_sec;
-
-  void observe()
-  {
-    const auto receipt = SteadyClock::now();
-    if (previous_receipt) {
-      wall_intervals_sec.push_back(
-        std::chrono::duration<double>(receipt - *previous_receipt).count());
-    }
-    previous_receipt = receipt;
-    ++samples;
-  }
 };
 
 class NavigationEvidenceRecorder final : public rclcpp::Node
@@ -85,6 +76,9 @@ public:
       "robot_name", "red_standard_robot1");
     duration_sec_ = std::max(0.1, declare_parameter<double>("duration_sec", 30.0));
     exit_on_nonzero_command_ = declare_parameter<bool>("exit_on_nonzero_command", false);
+
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this, false);
 
     const auto path_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     const auto sensor_qos = rclcpp::SensorDataQoS();
@@ -167,18 +161,59 @@ public:
       });
     localization_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/localization", sensor_qos,
-      [this](const nav_msgs::msg::Odometry::ConstSharedPtr) {
-        localization_arrivals_.observe();
+      [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
+        observeOdometry(localization_arrivals_, *message);
       });
     lidar_odometry_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/lidar_odometry", sensor_qos,
-      [this](const nav_msgs::msg::Odometry::ConstSharedPtr) {
-        lidar_odometry_arrivals_.observe();
+      [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
+        observeOdometry(lidar_odometry_arrivals_, *message);
       });
     odometry_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/odometry", sensor_qos,
-      [this](const nav_msgs::msg::Odometry::ConstSharedPtr) {
-        odometry_arrivals_.observe();
+      [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
+        observeOdometry(odometry_arrivals_, *message);
+      });
+    clock_sub_ = create_subscription<rosgraph_msgs::msg::Clock>(
+      "/clock", rclcpp::QoS(10).best_effort(),
+      [this](const rosgraph_msgs::msg::Clock::ConstSharedPtr message) {
+        const auto receipt = SteadyClock::now();
+        clock_arrivals_.observeReceipt(receipt);
+        const auto stamp_ns = toNanoseconds(message->clock);
+        clock_arrivals_.observeStamp(stamp_ns);
+        if (previous_clock_stamp_ns_ && previous_clock_receipt_) {
+          const auto wall_delta = std::chrono::duration<double>(
+            receipt - *previous_clock_receipt_).count();
+          const auto sim_delta = static_cast<double>(stamp_ns - *previous_clock_stamp_ns_) * 1e-9;
+          if (wall_delta > 0.0 && sim_delta >= 0.0) {
+            rtf_samples_.push_back(sim_delta / wall_delta);
+          }
+        }
+        previous_clock_stamp_ns_ = stamp_ns;
+        previous_clock_receipt_ = receipt;
+        latest_clock_stamp_ns_ = stamp_ns;
+      });
+    localization_status_sub_ = create_subscription<
+      ats_navigation_interfaces::msg::LocalizationStatus>(
+      "/localization/status", rclcpp::QoS(10).reliable(),
+      [this](const ats_navigation_interfaces::msg::LocalizationStatus::ConstSharedPtr message) {
+        const auto receipt = SteadyClock::now();
+        localization_status_arrivals_.observeReceipt(receipt);
+        const auto stamp_ns = toNanoseconds(message->header.stamp);
+        localization_status_arrivals_.observeStamp(stamp_ns);
+        localization_status_arrivals_.observeAge(latest_clock_stamp_ns_, stamp_ns);
+        if (std::isfinite(message->observation_age_sec)) {
+          localization_status_observation_age_sec_.push_back(message->observation_age_sec);
+        }
+        localization_status_last_state_ = message->state;
+        ++localization_status_samples_;
+        if (message->state ==
+          ats_navigation_interfaces::msg::LocalizationStatus::STATE_TRACKING)
+        {
+          ++localization_status_tracking_samples_;
+        } else {
+          ++localization_status_non_tracking_samples_;
+        }
       });
     map_status_sub_ = create_subscription<ats_navigation_interfaces::msg::PlanningMapStatus>(
       "/rog_map_adapter/status", rclcpp::QoS(1).reliable().transient_local(),
@@ -253,6 +288,26 @@ public:
               << arrivalStatistics("lidar_odometry", lidar_odometry_arrivals_)
               << arrivalStatistics("odometry", odometry_arrivals_)
               << arrivalStatistics("localization", localization_arrivals_)
+              << arrivalStatistics("clock", clock_arrivals_)
+              << " clock_rtf_p50=" << percentile(rtf_samples_, 0.50)
+              << " clock_rtf_p95=" << percentile(rtf_samples_, 0.95)
+              << " clock_rtf_p99=" << percentile(rtf_samples_, 0.99)
+              << arrivalStatistics("localization_status", localization_status_arrivals_)
+              << " localization_status_samples=" << localization_status_samples_
+              << " localization_status_tracking_samples=" << localization_status_tracking_samples_
+              << " localization_status_non_tracking_samples=" << localization_status_non_tracking_samples_
+              << " localization_status_last_state=" << static_cast<int>(localization_status_last_state_)
+              << " localization_status_observation_age_p50_s=" << percentile(
+                   localization_status_observation_age_sec_, 0.50)
+              << " localization_status_observation_age_p95_s=" << percentile(
+                   localization_status_observation_age_sec_, 0.95)
+              << " localization_status_observation_age_p99_s=" << percentile(
+                   localization_status_observation_age_sec_, 0.99)
+              << " tf_lookup_attempts=" << tf_lookup_attempts_
+              << " tf_lookup_successes=" << tf_lookup_successes_
+              << " tf_lookup_failures=" << tf_lookup_failures_
+              << " tf_lookup_max_ms=" << tf_lookup_max_ms_
+              << " dds_queue_drop_counter=unverified_no_portable_rmw_counter"
               << " adapter_ready_seen=" << yesNo(map_status_ready_seen_)
               << " adapter_max_wall_interval_s=" << optionalDouble(
                    map_status_max_interval_sec_)
@@ -305,28 +360,50 @@ private:
     return output.str();
   }
 
-  static std::string arrivalStatistics(const std::string & name, const ArrivalStatistics & statistics)
+  static std::int64_t toNanoseconds(const builtin_interfaces::msg::Time & stamp)
+  {
+    return static_cast<std::int64_t>(stamp.sec) * 1000000000LL + stamp.nanosec;
+  }
+
+  void observeOdometry(EvidenceStatistics & statistics, const nav_msgs::msg::Odometry & message)
+  {
+    statistics.observeReceipt();
+    const auto stamp_ns = toNanoseconds(message.header.stamp);
+    statistics.observeStamp(stamp_ns);
+    statistics.observeAge(latest_clock_stamp_ns_, stamp_ns);
+  }
+
+  static std::string arrivalStatistics(const std::string & name, const EvidenceStatistics & statistics)
   {
     std::ostringstream output;
     output << ' ' << name << "_samples=" << statistics.samples
-           << ' ' << name << "_p50_wall_interval_s=" << percentile(statistics, 0.50)
-           << ' ' << name << "_p95_wall_interval_s=" << percentile(statistics, 0.95)
-           << ' ' << name << "_p99_wall_interval_s=" << percentile(statistics, 0.99)
-           << ' ' << name << "_max_wall_interval_s=" << percentile(statistics, 1.00);
+           << ' ' << name << "_p50_wall_interval_s=" << percentile(statistics.wall_intervals_sec, 0.50)
+           << ' ' << name << "_p95_wall_interval_s=" << percentile(statistics.wall_intervals_sec, 0.95)
+           << ' ' << name << "_p99_wall_interval_s=" << percentile(statistics.wall_intervals_sec, 0.99)
+           << ' ' << name << "_max_wall_interval_s=" << percentile(statistics.wall_intervals_sec, 1.00)
+           << ' ' << name << "_p50_stamp_interval_s=" << percentile(statistics.stamp_intervals_sec, 0.50)
+           << ' ' << name << "_p95_stamp_interval_s=" << percentile(statistics.stamp_intervals_sec, 0.95)
+           << ' ' << name << "_p99_stamp_interval_s=" << percentile(statistics.stamp_intervals_sec, 0.99)
+           << ' ' << name << "_max_stamp_interval_s=" << percentile(statistics.stamp_intervals_sec, 1.00)
+           << ' ' << name << "_p50_stamp_age_s=" << percentile(statistics.stamp_ages_sec, 0.50)
+           << ' ' << name << "_p95_stamp_age_s=" << percentile(statistics.stamp_ages_sec, 0.95)
+           << ' ' << name << "_p99_stamp_age_s=" << percentile(statistics.stamp_ages_sec, 0.99)
+           << ' ' << name << "_max_stamp_age_s=" << percentile(statistics.stamp_ages_sec, 1.00)
+           << ' ' << name << "_duplicate_stamp_count=" << statistics.duplicate_stamp_count
+           << ' ' << name << "_backward_stamp_count=" << statistics.backward_stamp_count
+           << ' ' << name << "_invalid_stamp_count=" << statistics.invalid_stamp_count
+           << ' ' << name << "_future_stamp_count=" << statistics.future_stamp_count;
     return output.str();
   }
 
-  static std::string percentile(const ArrivalStatistics & statistics, double probability)
+  static std::string percentile(const std::vector<double> & values, const double probability)
   {
-    if (statistics.wall_intervals_sec.empty()) {
+    if (values.empty()) {
       return "unverified";
     }
-    auto sorted = statistics.wall_intervals_sec;
-    std::sort(sorted.begin(), sorted.end());
-    const auto index = static_cast<std::size_t>(std::ceil(
-      std::clamp(probability, 0.0, 1.0) * static_cast<double>(sorted.size()))) - 1U;
     std::ostringstream output;
-    output << std::fixed << std::setprecision(6) << sorted[index];
+    output << std::fixed << std::setprecision(6)
+           << rmu_gazebo_simulator::percentile(values, probability);
     return output.str();
   }
 
@@ -343,6 +420,7 @@ private:
 
   void observeGraph()
   {
+    observeTf();
     try {
       const auto planning_grid_publishers = get_publishers_info_by_topic(
         "/rc_esdf/planning_grid");
@@ -377,6 +455,24 @@ private:
       // Shutdown can cancel the timer concurrently. Evidence collected before
       // that point remains valid and is printed after spin returns.
     }
+  }
+
+  void observeTf()
+  {
+    if (!tf_buffer_) {
+      return;
+    }
+    ++tf_lookup_attempts_;
+    const auto started = SteadyClock::now();
+    try {
+      (void)tf_buffer_->lookupTransform("map", "gimbal_yaw_odom", tf2::TimePointZero);
+      ++tf_lookup_successes_;
+    } catch (const tf2::TransformException &) {
+      ++tf_lookup_failures_;
+    }
+    tf_lookup_max_ms_ = std::max(
+      tf_lookup_max_ms_,
+      std::chrono::duration<double, std::milli>(SteadyClock::now() - started).count());
   }
 
   static std::string endpointName(const rclcpp::TopicEndpointInfo & endpoint)
@@ -491,9 +587,25 @@ private:
   bool wheel_active_{false};
   std::optional<PoseSample> ground_truth_begin_;
   std::optional<PoseSample> ground_truth_end_;
-  ArrivalStatistics lidar_odometry_arrivals_;
-  ArrivalStatistics odometry_arrivals_;
-  ArrivalStatistics localization_arrivals_;
+  EvidenceStatistics lidar_odometry_arrivals_;
+  EvidenceStatistics odometry_arrivals_;
+  EvidenceStatistics localization_arrivals_;
+  EvidenceStatistics clock_arrivals_;
+  EvidenceStatistics localization_status_arrivals_;
+  std::vector<double> rtf_samples_;
+  std::optional<std::int64_t> latest_clock_stamp_ns_;
+  std::optional<std::int64_t> previous_clock_stamp_ns_;
+  std::optional<SteadyTime> previous_clock_receipt_;
+  std::size_t localization_status_samples_{0};
+  std::size_t localization_status_tracking_samples_{0};
+  std::size_t localization_status_non_tracking_samples_{0};
+  std::vector<double> localization_status_observation_age_sec_;
+  std::uint8_t localization_status_last_state_{
+    ats_navigation_interfaces::msg::LocalizationStatus::STATE_UNINITIALIZED};
+  std::size_t tf_lookup_attempts_{0};
+  std::size_t tf_lookup_successes_{0};
+  std::size_t tf_lookup_failures_{0};
+  double tf_lookup_max_ms_{0.0};
   bool map_status_ready_seen_{false};
   std::optional<SteadyTime> last_map_status_received_;
   std::optional<double> map_status_max_interval_sec_;
@@ -517,10 +629,15 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lidar_odometry_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr localization_sub_;
+  rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
+  rclcpp::Subscription<ats_navigation_interfaces::msg::LocalizationStatus>::SharedPtr
+    localization_status_sub_;
   rclcpp::Subscription<ats_navigation_interfaces::msg::PlanningMapStatus>::SharedPtr
     map_status_sub_;
   rclcpp::TimerBase::SharedPtr deadline_timer_;
   rclcpp::TimerBase::SharedPtr graph_timer_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 };
 
 }  // namespace

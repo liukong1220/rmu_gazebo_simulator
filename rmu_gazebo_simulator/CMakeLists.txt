@@ -80,7 +80,7 @@ install(PROGRAMS
 
 if(BUILD_TESTING)
   add_executable(test_swerve_kinematics
-    test/test_swerve_kinematics.cpp
+    tests/test_swerve_kinematics.cpp
   )
   target_compile_features(test_swerve_kinematics PRIVATE cxx_std_17)
   target_include_directories(test_swerve_kinematics PRIVATE include)

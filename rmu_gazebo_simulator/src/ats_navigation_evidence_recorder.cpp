@@ -29,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -92,6 +93,18 @@ public:
       "/minco/raw_path", path_qos,
       [this](const nav_msgs::msg::Path::ConstSharedPtr message) {
         jps_max_points_ = std::max(jps_max_points_, message->poses.size());
+      });
+    preprocessed_guide_sub_ = create_subscription<nav_msgs::msg::Path>(
+      "/minco/preprocessed_guide", path_qos,
+      [this](const nav_msgs::msg::Path::ConstSharedPtr message) {
+        preprocessed_guide_max_points_ = std::max(
+          preprocessed_guide_max_points_, message->poses.size());
+      });
+    esdf_refined_guide_sub_ = create_subscription<nav_msgs::msg::Path>(
+      "/minco/esdf_refined_guide", path_qos,
+      [this](const nav_msgs::msg::Path::ConstSharedPtr message) {
+        esdf_refined_guide_max_points_ = std::max(
+          esdf_refined_guide_max_points_, message->poses.size());
       });
     reference_path_sub_ = create_subscription<nav_msgs::msg::Path>(
       "/minco/reference_path", path_qos,
@@ -209,6 +222,8 @@ public:
               << " completed=" << (completed_normally_ ? "yes" : "interrupted")
               << " duration_s=" << duration
               << " jps_max_points=" << jps_max_points_
+              << " preprocessed_guide_max_points=" << preprocessed_guide_max_points_
+              << " esdf_refined_guide_max_points=" << esdf_refined_guide_max_points_
               << " minco_max_points=" << minco_max_points_
               << " mpc_predicted_max_points=" << predicted_max_points_
               << " mpc_executed_max_points=" << executed_max_points_
@@ -223,6 +238,14 @@ public:
               << " motion_control_subscriber_max=" << motion_control_subscriber_max_
               << " chassis_cmd_publisher_max=" << chassis_cmd_publisher_max_
               << " chassis_cmd_subscriber_max=" << chassis_cmd_subscriber_max_
+              << " planning_grid_publisher_max=" << planning_grid_publisher_max_
+              << " planning_grid_subscriber_max=" << planning_grid_subscriber_max_
+              << " planning_grid_publisher_names=" << planningGridPublishers()
+              << " planning_grid_adapter_seen=" << yesNo(planning_grid_adapter_seen_)
+              << " planning_grid_named_non_adapter_seen=" << yesNo(
+                   planning_grid_named_non_adapter_seen_)
+              << " planning_grid_anonymous_endpoint_seen=" << yesNo(
+                   planning_grid_anonymous_endpoint_seen_)
               << " wheel_active=" << yesNo(wheel_active_)
               << " wheel_peak_rad_s=" << wheelPeaks()
               << " gt_begin_xyz=" << poseValue(ground_truth_begin_)
@@ -321,6 +344,23 @@ private:
   void observeGraph()
   {
     try {
+      const auto planning_grid_publishers = get_publishers_info_by_topic(
+        "/rc_esdf/planning_grid");
+      planning_grid_publisher_max_ = std::max(
+        planning_grid_publisher_max_, planning_grid_publishers.size());
+      for (const auto & publisher : planning_grid_publishers) {
+        const std::string publisher_name = endpointName(publisher);
+        planning_grid_publishers_.insert(publisher_name);
+        if (publisher_name == "/ats_rog_map_adapter") {
+          planning_grid_adapter_seen_ = true;
+        } else if (isAnonymousEndpoint(publisher_name)) {
+          planning_grid_anonymous_endpoint_seen_ = true;
+        } else {
+          planning_grid_named_non_adapter_seen_ = true;
+        }
+      }
+      planning_grid_subscriber_max_ = std::max(
+        planning_grid_subscriber_max_, count_subscribers("/rc_esdf/planning_grid"));
       cmd_vel_mpc_publisher_max_ = std::max(
         cmd_vel_mpc_publisher_max_, count_publishers("/cmd_vel_mpc"));
       cmd_vel_mpc_subscriber_max_ = std::max(
@@ -337,6 +377,38 @@ private:
       // Shutdown can cancel the timer concurrently. Evidence collected before
       // that point remains valid and is printed after spin returns.
     }
+  }
+
+  static std::string endpointName(const rclcpp::TopicEndpointInfo & endpoint)
+  {
+    const std::string node_namespace = endpoint.node_namespace();
+    if (node_namespace.empty() || node_namespace == "/") {
+      return "/" + endpoint.node_name();
+    }
+    return node_namespace + "/" + endpoint.node_name();
+  }
+
+  static bool isAnonymousEndpoint(const std::string & endpoint_name)
+  {
+    return endpoint_name.find("_NODE_NAMESPACE_UNKNOWN_") != std::string::npos ||
+           endpoint_name.find("_NODE_NAME_UNKNOWN_") != std::string::npos;
+  }
+
+  std::string planningGridPublishers() const
+  {
+    if (planning_grid_publishers_.empty()) {
+      return "unverified";
+    }
+    std::ostringstream output;
+    for (auto iter = planning_grid_publishers_.begin();
+      iter != planning_grid_publishers_.end(); ++iter)
+    {
+      if (iter != planning_grid_publishers_.begin()) {
+        output << ',';
+      }
+      output << *iter;
+    }
+    return output.str();
   }
 
   void recordJointState(const sensor_msgs::msg::JointState & message)
@@ -394,6 +466,8 @@ private:
   SteadyTime started_;
   bool completed_normally_{false};
   std::size_t jps_max_points_{0};
+  std::size_t preprocessed_guide_max_points_{0};
+  std::size_t esdf_refined_guide_max_points_{0};
   std::size_t minco_max_points_{0};
   std::size_t predicted_max_points_{0};
   std::size_t executed_max_points_{0};
@@ -408,6 +482,12 @@ private:
   std::size_t motion_control_subscriber_max_{0};
   std::size_t chassis_cmd_publisher_max_{0};
   std::size_t chassis_cmd_subscriber_max_{0};
+  std::size_t planning_grid_publisher_max_{0};
+  std::size_t planning_grid_subscriber_max_{0};
+  std::set<std::string> planning_grid_publishers_;
+  bool planning_grid_adapter_seen_{false};
+  bool planning_grid_named_non_adapter_seen_{false};
+  bool planning_grid_anonymous_endpoint_seen_{false};
   bool wheel_active_{false};
   std::optional<PoseSample> ground_truth_begin_;
   std::optional<PoseSample> ground_truth_end_;
@@ -424,6 +504,8 @@ private:
   std::map<std::string, double> wheel_peak_rad_s_;
 
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr raw_path_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr preprocessed_guide_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr esdf_refined_guide_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr reference_path_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr predicted_path_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr executed_path_sub_;

@@ -50,7 +50,7 @@ Visualization Manager:
       Displays:
         # This is the PGM world model. It remains independent from the
         # robot-centred ROGMap diagnostic volume below.
-        - Alpha: 0.55
+        - Alpha: 0.30
           Class: rviz_default_plugins/Map
           Color Scheme: map
           Draw Behind: true
@@ -101,12 +101,12 @@ Visualization Manager:
           Value: true
         # Visualization only. These grids never feed back into the numerical
         # projection service or planning snapshot.
-        - Alpha: 0.45
+        - Alpha: 0.62
           Class: rviz_default_plugins/Map
           Color Scheme: costmap
-          Draw Behind: false
-          Enabled: false
-          Name: Signed Distance Debug
+          Draw Behind: true
+          Enabled: true
+          Name: Global Fused RC-ESDF (ROGMap + Static + Terrain)
           Topic:
             Depth: 1
             Durability Policy: Transient Local
@@ -307,7 +307,49 @@ Visualization Manager:
             Reliability Policy: Reliable
             Value: /minco/raw_path
           Value: true
-        # 2. MINCO optimized reference: continuous optimized path, orange.
+        # 2. Geometry-only guide after duplicate/collinear/shortcut checks.
+        - Alpha: 0.95
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 220; 0
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.02
+          Name: MINCO Guide / Geometry Preprocessed
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0.48
+          Pose Style: None
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /minco/preprocessed_guide
+          Value: true
+        # 3. ESDF-normal refinement guide before MINCO S3 timing.
+        - Alpha: 0.95
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 145; 0
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.03
+          Name: MINCO Guide / ESDF Refined
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0.52
+          Pose Style: None
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /minco/esdf_refined_guide
+          Value: true
+        # 4. MINCO optimized reference: continuous optimized path, orange.
         - Alpha: 1
           Buffer Length: 1
           Class: rviz_default_plugins/Path
@@ -318,7 +360,7 @@ Visualization Manager:
           Length: 0.3
           Line Style: Lines
           Line Width: 0.18
-          Name: 2 MINCO Reference Path
+          Name: 4 MINCO Reference Path
           Offset:
             X: 0
             Y: 0
@@ -334,7 +376,7 @@ Visualization Manager:
             Reliability Policy: Reliable
             Value: /minco/reference_path
           Value: true
-        # 3. MPC prediction for the current control cycle, magenta billboards.
+        # 5. MPC prediction for the current control cycle, magenta billboards.
         - Alpha: 1
           Buffer Length: 1
           Class: rviz_default_plugins/Path
@@ -345,7 +387,7 @@ Visualization Manager:
           Length: 0.3
           Line Style: Billboards
           Line Width: 0.16
-          Name: 3 MPC Predicted Path
+          Name: 5 MPC Predicted Path
           Offset:
             X: 0
             Y: 0
@@ -361,7 +403,7 @@ Visualization Manager:
             Reliability Policy: Reliable
             Value: /ats_swerve_mpc/predicted_path
           Value: true
-        # 4. Realised trajectory sampled from /localization by
+        # 6. Realised trajectory sampled from /localization by
         #    executed_path_observer. Not a copy of 2 or 3; green billboards.
         - Alpha: 1
           Buffer Length: 1
@@ -373,7 +415,7 @@ Visualization Manager:
           Length: 0.3
           Line Style: Billboards
           Line Width: 0.20
-          Name: 4 MPC Executed Path
+          Name: 6 MPC Executed Path
           Offset:
             X: 0
             Y: 0

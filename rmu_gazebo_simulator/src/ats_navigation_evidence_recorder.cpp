@@ -28,6 +28,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -38,12 +39,16 @@
 #include <ats_navigation_interfaces/msg/localization_status.hpp>
 #include <builtin_interfaces/msg/time.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <ignition/msgs/pointcloud_packed.pb.h>
+#include <ignition/transport/Node.hh>
+#include <livox_ros_driver2/msg/custom_msg.hpp>
 #include <manda_can_control/msg/motion_ctrl.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rosgraph_msgs/msg/clock.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2/exceptions.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -76,6 +81,12 @@ public:
       "robot_name", "red_standard_robot1");
     duration_sec_ = std::max(0.1, declare_parameter<double>("duration_sec", 30.0));
     exit_on_nonzero_command_ = declare_parameter<bool>("exit_on_nonzero_command", false);
+    observe_gazebo_transport_lidar_ = declare_parameter<bool>(
+      "observe_gazebo_transport_lidar", false);
+    gazebo_lidar_transport_topic_ = declare_parameter<std::string>(
+      "gazebo_lidar_transport_topic",
+      "/world/default/model/" + robot_name_ +
+      "/link/front_mid360/sensor/front_mid360_lidar/scan/points");
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this, false);
@@ -159,6 +170,11 @@ public:
       [this](const sensor_msgs::msg::JointState::ConstSharedPtr message) {
         recordJointState(*message);
       });
+    gazebo_lidar_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+      "/" + robot_name_ + "/livox/lidar", sensor_qos,
+      [this](const sensor_msgs::msg::PointCloud2::ConstSharedPtr message) {
+        observePointCloud(gazebo_lidar_arrivals_, message->header.stamp);
+      });
     localization_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/localization", sensor_qos,
       [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
@@ -169,6 +185,16 @@ public:
       [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
         observeOdometry(lidar_odometry_arrivals_, *message);
       });
+    cloud_registered_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+      "/cloud_registered", sensor_qos,
+      [this](const sensor_msgs::msg::PointCloud2::ConstSharedPtr message) {
+        observePointCloud(cloud_registered_arrivals_, message->header.stamp);
+      });
+    livox_input_sub_ = create_subscription<livox_ros_driver2::msg::CustomMsg>(
+      "/livox/lidar", sensor_qos,
+      [this](const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr message) {
+        observePointCloud(livox_input_arrivals_, message->header.stamp);
+      });
     odometry_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/odometry", sensor_qos,
       [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
@@ -177,6 +203,7 @@ public:
     clock_sub_ = create_subscription<rosgraph_msgs::msg::Clock>(
       "/clock", rclcpp::QoS(10).best_effort(),
       [this](const rosgraph_msgs::msg::Clock::ConstSharedPtr message) {
+        const auto callback_started = SteadyClock::now();
         const auto receipt = SteadyClock::now();
         clock_arrivals_.observeReceipt(receipt);
         const auto stamp_ns = toNanoseconds(message->clock);
@@ -192,11 +219,13 @@ public:
         previous_clock_stamp_ns_ = stamp_ns;
         previous_clock_receipt_ = receipt;
         latest_clock_stamp_ns_ = stamp_ns;
+        clock_arrivals_.observeCallbackDuration(callback_started);
       });
     localization_status_sub_ = create_subscription<
       ats_navigation_interfaces::msg::LocalizationStatus>(
       "/localization/status", rclcpp::QoS(10).reliable(),
       [this](const ats_navigation_interfaces::msg::LocalizationStatus::ConstSharedPtr message) {
+        const auto callback_started = SteadyClock::now();
         const auto receipt = SteadyClock::now();
         localization_status_arrivals_.observeReceipt(receipt);
         const auto stamp_ns = toNanoseconds(message->header.stamp);
@@ -214,10 +243,12 @@ public:
         } else {
           ++localization_status_non_tracking_samples_;
         }
+        localization_status_arrivals_.observeCallbackDuration(callback_started);
       });
     map_status_sub_ = create_subscription<ats_navigation_interfaces::msg::PlanningMapStatus>(
       "/rog_map_adapter/status", rclcpp::QoS(1).reliable().transient_local(),
       [this](const ats_navigation_interfaces::msg::PlanningMapStatus::ConstSharedPtr message) {
+        const auto callback_started = SteadyClock::now();
         observeInterval(last_map_status_received_, map_status_max_interval_sec_);
         map_status_ready_seen_ = map_status_ready_seen_ || message->ready;
         if (message->ready) {
@@ -228,13 +259,41 @@ public:
             message->publication_sequence);
           adapter_publication_sequence_end_ = message->publication_sequence;
         }
+        adapter_status_callback_durations_sec_.push_back(
+          std::chrono::duration<double>(SteadyClock::now() - callback_started).count());
       });
 
+    if (observe_gazebo_transport_lidar_) {
+      const bool subscribed = gazebo_transport_node_.Subscribe(
+        gazebo_lidar_transport_topic_,
+        &NavigationEvidenceRecorder::onGazeboTransportLidar, this);
+      {
+        std::lock_guard<std::mutex> lock(gazebo_transport_lidar_mutex_);
+        gazebo_transport_lidar_subscription_established_ = subscribed;
+      }
+      if (subscribed) {
+        RCLCPP_INFO(
+          get_logger(), "Observing Gazebo Transport LiDAR '%s' for diagnostic evidence.",
+          gazebo_lidar_transport_topic_.c_str());
+      } else {
+        RCLCPP_ERROR(
+          get_logger(), "Unable to subscribe to Gazebo Transport LiDAR '%s'.",
+          gazebo_lidar_transport_topic_.c_str());
+      }
+    }
+
     started_ = SteadyClock::now();
+    // A one-shot timer may be dispatched a few milliseconds before its
+    // requested steady-clock deadline. Polling the same steady elapsed time
+    // prevents a nominally completed observer from being rejected as a
+    // 59.98 s sample for a required 60 s window.
     deadline_timer_ = create_wall_timer(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::duration<double>(duration_sec_)),
+      std::chrono::milliseconds(10),
       [this]() {
+        const auto elapsed = std::chrono::duration<double>(SteadyClock::now() - started_);
+        if (elapsed.count() < duration_sec_) {
+          return;
+        }
         completed_normally_ = true;
         deadline_timer_->cancel();
         rclcpp::shutdown();
@@ -285,7 +344,11 @@ public:
               << " wheel_peak_rad_s=" << wheelPeaks()
               << " gt_begin_xyz=" << poseValue(ground_truth_begin_)
               << " gt_end_xyz=" << poseValue(ground_truth_end_)
+              << gazeboTransportLidarStatistics()
+              << arrivalStatistics("gazebo_lidar", gazebo_lidar_arrivals_)
               << arrivalStatistics("lidar_odometry", lidar_odometry_arrivals_)
+              << arrivalStatistics("livox_input", livox_input_arrivals_)
+              << arrivalStatistics("cloud_registered", cloud_registered_arrivals_)
               << arrivalStatistics("odometry", odometry_arrivals_)
               << arrivalStatistics("localization", localization_arrivals_)
               << arrivalStatistics("clock", clock_arrivals_)
@@ -308,6 +371,15 @@ public:
               << " tf_lookup_failures=" << tf_lookup_failures_
               << " tf_lookup_max_ms=" << tf_lookup_max_ms_
               << " dds_queue_drop_counter=unverified_no_portable_rmw_counter"
+              << " adapter_status_callback_count=" << adapter_status_callback_durations_sec_.size()
+              << " adapter_status_callback_p50_s=" << percentile(
+                   adapter_status_callback_durations_sec_, 0.50)
+              << " adapter_status_callback_p95_s=" << percentile(
+                   adapter_status_callback_durations_sec_, 0.95)
+              << " adapter_status_callback_p99_s=" << percentile(
+                   adapter_status_callback_durations_sec_, 0.99)
+              << " adapter_status_callback_max_s=" << percentile(
+                   adapter_status_callback_durations_sec_, 1.00)
               << " adapter_ready_seen=" << yesNo(map_status_ready_seen_)
               << " adapter_max_wall_interval_s=" << optionalDouble(
                    map_status_max_interval_sec_)
@@ -365,12 +437,52 @@ private:
     return static_cast<std::int64_t>(stamp.sec) * 1000000000LL + stamp.nanosec;
   }
 
+  static std::int64_t toNanoseconds(const ignition::msgs::Time & stamp)
+  {
+    return static_cast<std::int64_t>(stamp.sec()) * 1000000000LL + stamp.nsec();
+  }
+
   void observeOdometry(EvidenceStatistics & statistics, const nav_msgs::msg::Odometry & message)
   {
+    const auto callback_started = SteadyClock::now();
     statistics.observeReceipt();
     const auto stamp_ns = toNanoseconds(message.header.stamp);
     statistics.observeStamp(stamp_ns);
     statistics.observeAge(latest_clock_stamp_ns_, stamp_ns);
+    statistics.observeCallbackDuration(callback_started);
+  }
+
+  void observePointCloud(
+    EvidenceStatistics & statistics, const builtin_interfaces::msg::Time & stamp)
+  {
+    const auto callback_started = SteadyClock::now();
+    statistics.observeReceipt();
+    const auto stamp_ns = toNanoseconds(stamp);
+    statistics.observeStamp(stamp_ns);
+    statistics.observeAge(latest_clock_stamp_ns_, stamp_ns);
+    statistics.observeCallbackDuration(callback_started);
+  }
+
+  void onGazeboTransportLidar(const ignition::msgs::PointCloudPacked & message)
+  {
+    const auto callback_started = SteadyClock::now();
+    std::lock_guard<std::mutex> lock(gazebo_transport_lidar_mutex_);
+    gazebo_transport_lidar_arrivals_.observeReceipt();
+    gazebo_transport_lidar_arrivals_.observeStamp(toNanoseconds(message.header().stamp()));
+    gazebo_transport_lidar_arrivals_.observeCallbackDuration(callback_started);
+  }
+
+  std::string gazeboTransportLidarStatistics() const
+  {
+    std::lock_guard<std::mutex> lock(gazebo_transport_lidar_mutex_);
+    std::ostringstream output;
+    output << " gazebo_transport_lidar_observation_enabled=" << yesNo(
+      observe_gazebo_transport_lidar_)
+           << " gazebo_transport_lidar_subscription_established=" << yesNo(
+      gazebo_transport_lidar_subscription_established_)
+           << " gazebo_transport_lidar_topic=" << gazebo_lidar_transport_topic_
+           << arrivalStatistics("gazebo_transport_lidar", gazebo_transport_lidar_arrivals_);
+    return output.str();
   }
 
   static std::string arrivalStatistics(const std::string & name, const EvidenceStatistics & statistics)
@@ -392,7 +504,16 @@ private:
            << ' ' << name << "_duplicate_stamp_count=" << statistics.duplicate_stamp_count
            << ' ' << name << "_backward_stamp_count=" << statistics.backward_stamp_count
            << ' ' << name << "_invalid_stamp_count=" << statistics.invalid_stamp_count
-           << ' ' << name << "_future_stamp_count=" << statistics.future_stamp_count;
+           << ' ' << name << "_future_stamp_count=" << statistics.future_stamp_count
+           << ' ' << name << "_callback_count=" << statistics.callback_durations_sec.size()
+           << ' ' << name << "_p50_callback_duration_s=" << percentile(
+             statistics.callback_durations_sec, 0.50)
+           << ' ' << name << "_p95_callback_duration_s=" << percentile(
+             statistics.callback_durations_sec, 0.95)
+           << ' ' << name << "_p99_callback_duration_s=" << percentile(
+             statistics.callback_durations_sec, 0.99)
+           << ' ' << name << "_max_callback_duration_s=" << percentile(
+             statistics.callback_durations_sec, 1.00);
     return output.str();
   }
 
@@ -587,7 +708,16 @@ private:
   bool wheel_active_{false};
   std::optional<PoseSample> ground_truth_begin_;
   std::optional<PoseSample> ground_truth_end_;
+  bool observe_gazebo_transport_lidar_{false};
+  std::string gazebo_lidar_transport_topic_;
+  ignition::transport::Node gazebo_transport_node_;
+  mutable std::mutex gazebo_transport_lidar_mutex_;
+  bool gazebo_transport_lidar_subscription_established_{false};
+  EvidenceStatistics gazebo_transport_lidar_arrivals_;
+  EvidenceStatistics gazebo_lidar_arrivals_;
   EvidenceStatistics lidar_odometry_arrivals_;
+  EvidenceStatistics livox_input_arrivals_;
+  EvidenceStatistics cloud_registered_arrivals_;
   EvidenceStatistics odometry_arrivals_;
   EvidenceStatistics localization_arrivals_;
   EvidenceStatistics clock_arrivals_;
@@ -613,6 +743,7 @@ private:
   std::optional<std::uint64_t> adapter_source_generation_end_;
   std::optional<std::uint64_t> adapter_publication_sequence_begin_;
   std::optional<std::uint64_t> adapter_publication_sequence_end_;
+  std::vector<double> adapter_status_callback_durations_sec_;
   std::map<std::string, double> wheel_peak_rad_s_;
 
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr raw_path_sub_;
@@ -626,7 +757,10 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr chassis_cmd_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ground_truth_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr gazebo_lidar_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lidar_odometry_sub_;
+  rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr livox_input_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_registered_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr localization_sub_;
   rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;

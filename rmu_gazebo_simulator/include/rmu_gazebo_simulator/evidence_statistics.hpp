@@ -37,6 +37,7 @@ struct EvidenceStatistics
   std::vector<double> wall_intervals_sec;
   std::vector<double> stamp_intervals_sec;
   std::vector<double> stamp_ages_sec;
+  std::vector<double> callback_durations_sec;
   std::size_t duplicate_stamp_count{0};
   std::size_t backward_stamp_count{0};
   std::size_t invalid_stamp_count{0};
@@ -82,6 +83,17 @@ struct EvidenceStatistics
     if (age < 0.0) {
       ++future_stamp_count;
     }
+  }
+
+  void observeCallbackDuration(
+    const SteadyTime callback_started,
+    const SteadyTime callback_finished = SteadyClock::now())
+  {
+    if (callback_finished < callback_started) {
+      return;
+    }
+    callback_durations_sec.push_back(
+      std::chrono::duration<double>(callback_finished - callback_started).count());
   }
 };
 

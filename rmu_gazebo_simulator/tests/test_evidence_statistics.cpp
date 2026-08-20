@@ -35,6 +35,12 @@ int main()
   statistics.observeStamp(1'200'000'000);
   statistics.observeReceipt(start + std::chrono::milliseconds(200));
   statistics.observeStamp(1'100'000'000);
+  statistics.observeCallbackDuration(
+    start + std::chrono::milliseconds(200),
+    start + std::chrono::milliseconds(203));
+  statistics.observeCallbackDuration(
+    start + std::chrono::milliseconds(204),
+    start + std::chrono::milliseconds(206));
 
   assert(statistics.samples == 4U);
   assert(statistics.wall_intervals_sec.size() == 2U);
@@ -42,8 +48,11 @@ int main()
   assert(statistics.duplicate_stamp_count == 1U);
   assert(statistics.backward_stamp_count == 1U);
   assert(statistics.future_stamp_count == 1U);
+  assert(statistics.callback_durations_sec.size() == 2U);
   assert(rmu_gazebo_simulator::percentile(statistics.wall_intervals_sec, 0.99) > 0.09);
   assert(rmu_gazebo_simulator::percentile(statistics.stamp_ages_sec, 0.50) < 0.0);
   assert(std::abs(rmu_gazebo_simulator::percentile(statistics.stamp_ages_sec, 0.95) - 0.5) < 1e-12);
+  assert(std::abs(
+    rmu_gazebo_simulator::percentile(statistics.callback_durations_sec, 0.95) - 0.003) < 1e-12);
   return 0;
 }

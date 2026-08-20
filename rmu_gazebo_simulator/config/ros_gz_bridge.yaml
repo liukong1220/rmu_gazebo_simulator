@@ -36,11 +36,14 @@
   gz_type_name: "ignition.msgs.LaserScan"
   direction: "GZ_TO_ROS"
 
-- ros_topic_name: "/<robot_name>/livox/lidar"
-  gz_topic_name: "/world/default/model/<robot_name>/link/front_mid360/sensor/front_mid360_lidar/scan/points"
-  ros_type_name: "sensor_msgs/msg/PointCloud2"
-  gz_type_name: "ignition.msgs.PointCloudPacked"
-  direction: "GZ_TO_ROS"
+# When the direct active-navigation LiDAR bridge is enabled, launch replaces
+# this prefix with '#', disabling every line in this generic mapping. The
+# direct bridge then remains the sole publisher of the unchanged ROS topic.
+<direct_gazebo_lidar_bridge_prefix>- ros_topic_name: "/<robot_name>/livox/lidar"
+<direct_gazebo_lidar_bridge_prefix>  gz_topic_name: "/world/default/model/<robot_name>/link/front_mid360/sensor/front_mid360_lidar/scan/points"
+<direct_gazebo_lidar_bridge_prefix>  ros_type_name: "sensor_msgs/msg/PointCloud2"
+<direct_gazebo_lidar_bridge_prefix>  gz_type_name: "ignition.msgs.PointCloudPacked"
+<direct_gazebo_lidar_bridge_prefix>  direction: "GZ_TO_ROS"
 
 - ros_topic_name: "/<robot_name>/livox/imu"
   gz_topic_name: "/world/default/model/<robot_name>/link/front_mid360/sensor/front_mid360_imu/imu"

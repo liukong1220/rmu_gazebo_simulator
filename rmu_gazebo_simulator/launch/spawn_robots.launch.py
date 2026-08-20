@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import os
 import re
 
@@ -72,6 +73,57 @@ def launch_setup(context: LaunchContext) -> list:
     use_sim_time = _as_bool(resolve("use_sim_time"))
     launch_robot_base = _as_bool(resolve("launch_robot_base"))
     enable_camera_sensors = _as_bool(resolve("enable_camera_sensors"))
+    use_direct_gazebo_lidar_bridge = _as_bool(resolve("use_direct_gazebo_lidar_bridge"))
+    livox_update_rate_hz = resolve("livox_update_rate_hz")
+    livox_horizontal_samples = resolve("livox_horizontal_samples")
+    lidar_bridge_publisher_depth = resolve("lidar_bridge_publisher_depth")
+    lidar_bridge_publisher_reliability = (
+        resolve("lidar_bridge_publisher_reliability").strip().lower()
+    )
+    try:
+        livox_update_rate_hz_value = float(livox_update_rate_hz)
+    except ValueError as error:
+        raise RuntimeError(
+            "livox_update_rate_hz must be a finite positive number, got "
+            f"'{livox_update_rate_hz}'"
+        ) from error
+    if (
+        not math.isfinite(livox_update_rate_hz_value)
+        or livox_update_rate_hz_value <= 0.0
+    ):
+        raise RuntimeError(
+            "livox_update_rate_hz must be a finite positive number, got "
+            f"'{livox_update_rate_hz}'"
+        )
+    try:
+        livox_horizontal_samples_value = int(livox_horizontal_samples)
+    except ValueError as error:
+        raise RuntimeError(
+            "livox_horizontal_samples must be a positive integer, got "
+            f"'{livox_horizontal_samples}'"
+        ) from error
+    if livox_horizontal_samples_value <= 0:
+        raise RuntimeError(
+            "livox_horizontal_samples must be a positive integer, got "
+            f"'{livox_horizontal_samples}'"
+        )
+    try:
+        lidar_bridge_publisher_depth_value = int(lidar_bridge_publisher_depth)
+    except ValueError as error:
+        raise RuntimeError(
+            "lidar_bridge_publisher_depth must be a positive integer, got "
+            f"'{lidar_bridge_publisher_depth}'"
+        ) from error
+    if lidar_bridge_publisher_depth_value <= 0:
+        raise RuntimeError(
+            "lidar_bridge_publisher_depth must be a positive integer, got "
+            f"'{lidar_bridge_publisher_depth}'"
+        )
+    if lidar_bridge_publisher_reliability not in ("reliable", "best_effort"):
+        raise RuntimeError(
+            "lidar_bridge_publisher_reliability must be reliable or best_effort, got "
+            f"'{lidar_bridge_publisher_reliability}'"
+        )
 
     robot_xmacro_path = os.path.join(
         get_package_share_directory(description_package),
@@ -109,7 +161,13 @@ def launch_setup(context: LaunchContext) -> list:
 
     for robot in robots:
         # Generate SDF from xmacro
-        xmacro.generate({"global_initial_color": robot["color"]})
+        xmacro.generate(
+            {
+                "global_initial_color": robot["color"],
+                "nav_livox_update_rate_hz": livox_update_rate_hz_value,
+                "nav_livox_horizontal_samples": livox_horizontal_samples_value,
+            }
+        )
         robot_xml = xmacro.to_string()
 
         # Generate URDF from SDF. This uses the camera-enabled SDF on purpose:
@@ -129,7 +187,12 @@ def launch_setup(context: LaunchContext) -> list:
         # replace the <robot_name> in the bridge config file
         aft_replace_ros_bridge_params = ReplaceString(
             source_file=bridge_config,
-            replacements={"<robot_name>": robot["name"]},
+            replacements={
+                "<robot_name>": robot["name"],
+                "<direct_gazebo_lidar_bridge_prefix>": (
+                    "#" if use_direct_gazebo_lidar_bridge else ""
+                ),
+            },
         )
 
         spawn_robot = Node(
@@ -181,14 +244,39 @@ def launch_setup(context: LaunchContext) -> list:
             ],
         )
 
+        bridge_parameters = {
+            "config_file": aft_replace_ros_bridge_params,
+            "use_sim_time": use_sim_time,
+        }
+        if not use_direct_gazebo_lidar_bridge:
+            lidar_topic = f"/{robot['name']}/livox/lidar"
+            bridge_parameters[
+                f"qos_overrides.{lidar_topic}.publisher.depth"
+            ] = lidar_bridge_publisher_depth_value
+            bridge_parameters[
+                f"qos_overrides.{lidar_topic}.publisher.reliability"
+            ] = lidar_bridge_publisher_reliability
+
         robot_ign_bridge = Node(
             package="ros_gz_bridge",
             executable="parameter_bridge",
             namespace=robot["name"],
+            parameters=[bridge_parameters],
+        )
+
+        direct_lidar_bridge = Node(
+            package="rmu_gazebo_simulator",
+            executable="gz_lidar_ros_bridge_node",
+            name="gz_lidar_ros_bridge",
             parameters=[
                 {
-                    "config_file": aft_replace_ros_bridge_params,
                     "use_sim_time": use_sim_time,
+                    "gazebo_lidar_topic": (
+                        f"/world/default/model/{robot['name']}/link/front_mid360/"
+                        "sensor/front_mid360_lidar/scan/points"
+                    ),
+                    "ros_lidar_topic": f"/{robot['name']}/livox/lidar",
+                    "publisher_depth": 1,
                 }
             ],
         )
@@ -218,6 +306,8 @@ def launch_setup(context: LaunchContext) -> list:
             actions.append(robot_base)
         actions.append(robot_state_publisher)
         actions.append(robot_ign_bridge)
+        if use_direct_gazebo_lidar_bridge:
+            actions.append(direct_lidar_bridge)
         actions.append(set_performer_service)
 
     return actions
@@ -281,6 +371,56 @@ def generate_launch_description():
                 "render thread with the mid360 gpu_lidar and roughly halves its "
                 "measured rate, which starves Point-LIO. Links, joints and the "
                 "URDF are unaffected either way"
+            ),
+        )
+    )
+    ld.add_action(
+        DeclareLaunchArgument(
+            "use_direct_gazebo_lidar_bridge",
+            default_value="false",
+            description=(
+                "Use the dedicated BEST_EFFORT Mid360 GZ-to-ROS bridge and "
+                "disable the matching generic parameter_bridge mapping."
+            ),
+        )
+    )
+    ld.add_action(
+        DeclareLaunchArgument(
+            "livox_update_rate_hz",
+            default_value="10.0",
+            description=(
+                "Gazebo Mid360 update rate. The top-level launch derives bridge "
+                "and Point-LIO scan periods from this same value."
+            ),
+        )
+    )
+    ld.add_action(
+        DeclareLaunchArgument(
+            "livox_horizontal_samples",
+            default_value="625",
+            description=(
+                "Gazebo Mid360 horizontal ray count at fixed 10 Hz and 32 rings. "
+                "The navigation default is 625 (200 k rays/s)."
+            ),
+        )
+    )
+    ld.add_action(
+        DeclareLaunchArgument(
+            "lidar_bridge_publisher_depth",
+            default_value="10",
+            description=(
+                "ROS publisher depth for the generic Mid360 bridge. This is "
+                "ignored when the direct bridge path is selected."
+            ),
+        )
+    )
+    ld.add_action(
+        DeclareLaunchArgument(
+            "lidar_bridge_publisher_reliability",
+            default_value="reliable",
+            description=(
+                "ROS publisher reliability for the generic Mid360 bridge: "
+                "reliable or best_effort."
             ),
         )
     )

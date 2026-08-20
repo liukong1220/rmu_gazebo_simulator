@@ -22,6 +22,18 @@ ament_auto_add_executable(gz_livox_bridge_node
   src/gz_livox_bridge.cpp
 )
 
+# Active-navigation alternative to the generic multi-topic bridge for the
+# high-rate Mid360 stream. It is opt-in at launch and retains the same ROS
+# PointCloud2 topic consumed by gz_livox_bridge_node.
+ament_auto_add_executable(gz_lidar_ros_bridge_node
+  src/gz_lidar_ros_bridge.cpp
+)
+target_link_libraries(gz_lidar_ros_bridge_node
+  ignition-msgs8::ignition-msgs8
+  ignition-transport11::ignition-transport11
+  ros_gz_bridge::ros_gz_bridge
+)
+
 # Gazebo publishes /clock once per simulation step. Forwarding every step into
 # ROS makes each use_sim_time node process hundreds of redundant clock samples
 # per wall-clock second on the target laptop. Keep the original simulated time
@@ -47,6 +59,10 @@ ament_auto_add_executable(ats_navigation_evidence_recorder
   src/ats_navigation_evidence_recorder.cpp
 )
 target_include_directories(ats_navigation_evidence_recorder PRIVATE include)
+target_link_libraries(ats_navigation_evidence_recorder
+  ignition-msgs8::ignition-msgs8
+  ignition-transport11::ignition-transport11
+)
 
 # This isolated test client owns the action it cancels after the first actual
 # MPC command. It is never launched by the normal simulation profile.

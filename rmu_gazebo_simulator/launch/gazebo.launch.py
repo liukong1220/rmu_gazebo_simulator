@@ -51,6 +51,7 @@ def launch_setup(context: LaunchContext) -> list:
     headless = _as_bool(resolve("headless"))
     use_viewer = _as_bool(resolve("use_viewer"))
     use_sim_time = _as_bool(resolve("use_sim_time"))
+    headless_rendering = _as_bool(resolve("headless_rendering"))
 
     # headless wins over use_viewer: a CI/regression run must never open a GUI
     # just because a profile forgot to clear use_viewer.
@@ -64,6 +65,10 @@ def launch_setup(context: LaunchContext) -> list:
         gz_args += [" --gui-config ", ign_config_path]
     else:
         gz_args.insert(0, "-s ")
+        # GPU LiDAR remains a render workload even without a GUI. Select
+        # Gazebo's explicit off-screen server-rendering path for headless runs.
+        if headless_rendering:
+            gz_args.insert(0, "--headless-rendering ")
 
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -137,6 +142,16 @@ def generate_launch_description():
             "use_viewer",
             default_value="false",
             description="Open the Gazebo GUI. Ignored when headless is true",
+        )
+    )
+    ld.add_action(
+        DeclareLaunchArgument(
+            "headless_rendering",
+            default_value="true",
+            description=(
+                "Use Gazebo's explicit off-screen server rendering path when "
+                "headless. Ignored when a GUI viewer is enabled."
+            ),
         )
     )
     ld.add_action(

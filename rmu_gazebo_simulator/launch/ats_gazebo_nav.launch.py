@@ -78,6 +78,7 @@ def generate_launch_description() -> LaunchDescription:
     robot_name = LaunchConfiguration("robot_name")
     planning_grid_owner = LaunchConfiguration("planning_grid_owner")
     point_lio_scan_line = LaunchConfiguration("point_lio_scan_line")
+    livox_update_rate_hz = LaunchConfiguration("livox_update_rate_hz")
     use_rviz = LaunchConfiguration("use_rviz")
     enable_test_fault_injection = LaunchConfiguration("enable_test_fault_injection")
     require_gimbal_status = LaunchConfiguration("require_gimbal_status")
@@ -98,6 +99,14 @@ def generate_launch_description() -> LaunchDescription:
             "world",
             default_value="rmuc_2025",
             description="Gazebo world name; resolves resource/worlds/<world>_world.sdf",
+        ),
+        DeclareLaunchArgument(
+            "world_sdf_path",
+            default_value="",
+            description=(
+                "Explicit Gazebo world SDF path. Empty keeps the world-name "
+                "resolution above."
+            ),
         ),
         DeclareLaunchArgument(
             "map_yaml",
@@ -149,6 +158,14 @@ def generate_launch_description() -> LaunchDescription:
             "headless",
             default_value="true",
             description="Run Gazebo without any GUI. Default for regression runs",
+        ),
+        DeclareLaunchArgument(
+            "headless_rendering",
+            default_value="true",
+            description=(
+                "Use Gazebo's explicit off-screen server rendering path when "
+                "headless. This preserves GPU LiDAR sensor output without a GUI."
+            ),
         ),
         DeclareLaunchArgument(
             "launch_nav2",
@@ -212,11 +229,51 @@ def generate_launch_description() -> LaunchDescription:
             ),
         ),
         DeclareLaunchArgument(
+            "use_direct_gazebo_lidar_bridge",
+            default_value="false",
+            description=(
+                "Replace only the Mid360 generic GZ-to-ROS mapping with the "
+                "dedicated BEST_EFFORT direct bridge."
+            ),
+        ),
+        DeclareLaunchArgument(
             "point_lio_scan_line",
             default_value="32",
             description=(
                 "Gazebo Mid360 vertical line count. Must match the 32-row "
                 "PointCloud2 emitted by the robot description."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "livox_update_rate_hz",
+            default_value="10.0",
+            description=(
+                "Gazebo Mid360 update rate. Its reciprocal is used for both "
+                "the bridge offset-time span and Point-LIO measurement window."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "livox_horizontal_samples",
+            default_value="625",
+            description=(
+                "Gazebo Mid360 horizontal ray count at fixed 10 Hz and 32 rings. "
+                "The navigation default is 625 (200 k rays/s)."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "lidar_bridge_publisher_depth",
+            default_value="10",
+            description=(
+                "Generic Mid360 bridge ROS publisher queue depth. The default "
+                "preserves the existing reliable KeepLast(10) contract."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "lidar_bridge_publisher_reliability",
+            default_value="reliable",
+            description=(
+                "Generic Mid360 bridge ROS publisher reliability: reliable or "
+                "best_effort."
             ),
         ),
         DeclareLaunchArgument("launch_terrain_analysis", default_value="true"),
@@ -250,7 +307,9 @@ def generate_launch_description() -> LaunchDescription:
         ),
         launch_arguments={
             "world": world,
+            "world_sdf_path": LaunchConfiguration("world_sdf_path"),
             "headless": LaunchConfiguration("headless"),
+            "headless_rendering": LaunchConfiguration("headless_rendering"),
             "use_viewer": LaunchConfiguration("use_viewer"),
             "use_sim_time": use_sim_time,
         }.items(),
@@ -270,6 +329,17 @@ def generate_launch_description() -> LaunchDescription:
             # Never true here: it would add a second chassis command publisher.
             "launch_robot_base": "false",
             "enable_camera_sensors": LaunchConfiguration("enable_camera_sensors"),
+            "use_direct_gazebo_lidar_bridge": LaunchConfiguration(
+                "use_direct_gazebo_lidar_bridge"
+            ),
+            "livox_update_rate_hz": livox_update_rate_hz,
+            "livox_horizontal_samples": LaunchConfiguration("livox_horizontal_samples"),
+            "lidar_bridge_publisher_depth": LaunchConfiguration(
+                "lidar_bridge_publisher_depth"
+            ),
+            "lidar_bridge_publisher_reliability": LaunchConfiguration(
+                "lidar_bridge_publisher_reliability"
+            ),
         }.items(),
     )
 
@@ -313,10 +383,13 @@ def generate_launch_description() -> LaunchDescription:
                 "output_imu_topic": "/livox/imu",
                 "lidar_frame_id": "front_mid360",
                 "imu_frame_id": "front_mid360",
-                # The SDF publishes one complete 625 x 32 Mid360 frame at
-                # 10 Hz.  Keep CustomPoint offset_time inside the same 0.1 s
-                # interval that Point-LIO uses for this sensor profile.
-                "scan_period_sec": 0.1,
+                # The SDF update rate, synthetic CustomPoint offsets and
+                # Point-LIO measurement window share one period. A timing A/B
+                # cannot silently make deskew offsets describe another sensor.
+                "scan_period_sec": ParameterValue(
+                    PythonExpression(["1.0 / float('", livox_update_rate_hz, "')"]),
+                    value_type=float,
+                ),
             }
         ],
     )
@@ -334,6 +407,10 @@ def generate_launch_description() -> LaunchDescription:
                 "common.imu_topic": "/livox/imu",
                 "preprocess.scan_line": ParameterValue(
                     point_lio_scan_line, value_type=int
+                ),
+                "mapping.lidar_time_inte": ParameterValue(
+                    PythonExpression(["1.0 / float('", livox_update_rate_hz, "')"]),
+                    value_type=float,
                 ),
                 # The Gazebo IMU and the bridged LiDAR both use
                 # front_mid360.  The root parameter file contains calibrated

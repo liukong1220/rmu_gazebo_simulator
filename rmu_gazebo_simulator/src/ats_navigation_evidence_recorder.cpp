@@ -26,7 +26,6 @@
 #include <iomanip>
 #include <iostream>
 #include <iterator>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -42,12 +41,10 @@
 #include <ignition/msgs/pointcloud_packed.pb.h>
 #include <ignition/transport/Node.hh>
 #include <livox_ros_driver2/msg/custom_msg.hpp>
-#include <manda_can_control/msg/motion_ctrl.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rosgraph_msgs/msg/clock.hpp>
-#include <sensor_msgs/msg/joint_state.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2/exceptions.h>
 #include <tf2_ros/buffer.h>
@@ -61,13 +58,6 @@ namespace
 using rmu_gazebo_simulator::EvidenceStatistics;
 using rmu_gazebo_simulator::SteadyClock;
 using rmu_gazebo_simulator::SteadyTime;
-
-struct PoseSample
-{
-  double x{0.0};
-  double y{0.0};
-  double z{0.0};
-};
 
 class NavigationEvidenceRecorder final : public rclcpp::Node
 {
@@ -139,36 +129,6 @@ public:
           deadline_timer_->cancel();
           rclcpp::shutdown();
         }
-      });
-    motion_sub_ = create_subscription<manda_can_control::msg::MotionCtrl>(
-      "/motion_control", path_qos,
-      [this](const manda_can_control::msg::MotionCtrl::ConstSharedPtr message) {
-        motion_control_nonzero_ = motion_control_nonzero_ ||
-          std::abs(message->linear_x) > kNonzeroEpsilon ||
-          std::abs(message->linear_y) > kNonzeroEpsilon ||
-          std::abs(message->angular_z) > kNonzeroEpsilon;
-      });
-    chassis_cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-      "/" + robot_name_ + "/cmd_vel", path_qos,
-      [this](const geometry_msgs::msg::Twist::ConstSharedPtr message) {
-        chassis_command_nonzero_ = chassis_command_nonzero_ || nonzero(*message);
-      });
-    ground_truth_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/" + robot_name_ + "/chassis_odometry_gt", sensor_qos,
-      [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
-        PoseSample sample;
-        sample.x = message->pose.pose.position.x;
-        sample.y = message->pose.pose.position.y;
-        sample.z = message->pose.pose.position.z;
-        if (!ground_truth_begin_) {
-          ground_truth_begin_ = sample;
-        }
-        ground_truth_end_ = sample;
-      });
-    joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
-      "/" + robot_name_ + "/joint_states", sensor_qos,
-      [this](const sensor_msgs::msg::JointState::ConstSharedPtr message) {
-        recordJointState(*message);
       });
     gazebo_lidar_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       "/" + robot_name_ + "/livox/lidar", sensor_qos,
@@ -324,14 +284,8 @@ public:
               << " exit_on_nonzero_command=" << yesNo(exit_on_nonzero_command_)
               << " nonzero_command_triggered=" << yesNo(nonzero_command_triggered_)
               << " cmd_vel_nonzero=" << yesNo(cmd_vel_nonzero_)
-              << " motion_control_nonzero=" << yesNo(motion_control_nonzero_)
-              << " chassis_cmd_nonzero=" << yesNo(chassis_command_nonzero_)
               << " cmd_vel_mpc_publisher_max=" << cmd_vel_mpc_publisher_max_
               << " cmd_vel_mpc_subscriber_max=" << cmd_vel_mpc_subscriber_max_
-              << " motion_control_publisher_max=" << motion_control_publisher_max_
-              << " motion_control_subscriber_max=" << motion_control_subscriber_max_
-              << " chassis_cmd_publisher_max=" << chassis_cmd_publisher_max_
-              << " chassis_cmd_subscriber_max=" << chassis_cmd_subscriber_max_
               << " planning_grid_publisher_max=" << planning_grid_publisher_max_
               << " planning_grid_subscriber_max=" << planning_grid_subscriber_max_
               << " planning_grid_publisher_names=" << planningGridPublishers()
@@ -340,10 +294,6 @@ public:
                    planning_grid_named_non_adapter_seen_)
               << " planning_grid_anonymous_endpoint_seen=" << yesNo(
                    planning_grid_anonymous_endpoint_seen_)
-              << " wheel_active=" << yesNo(wheel_active_)
-              << " wheel_peak_rad_s=" << wheelPeaks()
-              << " gt_begin_xyz=" << poseValue(ground_truth_begin_)
-              << " gt_end_xyz=" << poseValue(ground_truth_end_)
               << gazeboTransportLidarStatistics()
               << arrivalStatistics("gazebo_lidar", gazebo_lidar_arrivals_)
               << arrivalStatistics("lidar_odometry", lidar_odometry_arrivals_)
@@ -419,17 +369,6 @@ private:
   static std::string optionalUint(const std::optional<std::uint64_t> & value)
   {
     return value ? std::to_string(*value) : "unverified";
-  }
-
-  static std::string poseValue(const std::optional<PoseSample> & value)
-  {
-    if (!value) {
-      return "unverified";
-    }
-    std::ostringstream output;
-    output << std::fixed << std::setprecision(6)
-           << value->x << ',' << value->y << ',' << value->z;
-    return output.str();
   }
 
   static std::int64_t toNanoseconds(const builtin_interfaces::msg::Time & stamp)
@@ -564,14 +503,6 @@ private:
         cmd_vel_mpc_publisher_max_, count_publishers("/cmd_vel_mpc"));
       cmd_vel_mpc_subscriber_max_ = std::max(
         cmd_vel_mpc_subscriber_max_, count_subscribers("/cmd_vel_mpc"));
-      motion_control_publisher_max_ = std::max(
-        motion_control_publisher_max_, count_publishers("/motion_control"));
-      motion_control_subscriber_max_ = std::max(
-        motion_control_subscriber_max_, count_subscribers("/motion_control"));
-      chassis_cmd_publisher_max_ = std::max(
-        chassis_cmd_publisher_max_, count_publishers("/" + robot_name_ + "/cmd_vel"));
-      chassis_cmd_subscriber_max_ = std::max(
-        chassis_cmd_subscriber_max_, count_subscribers("/" + robot_name_ + "/cmd_vel"));
     } catch (const std::exception &) {
       // Shutdown can cancel the timer concurrently. Evidence collected before
       // that point remains valid and is printed after spin returns.
@@ -628,56 +559,6 @@ private:
     return output.str();
   }
 
-  void recordJointState(const sensor_msgs::msg::JointState & message)
-  {
-    const std::size_t count = std::min(message.name.size(), message.velocity.size());
-    for (std::size_t index = 0; index < count; ++index) {
-      const auto & name = message.name[index];
-      if (!isSwerveJoint(name)) {
-        continue;
-      }
-      const double speed = std::abs(message.velocity[index]);
-      if (!std::isfinite(speed)) {
-        continue;
-      }
-      wheel_peak_rad_s_[name] = std::max(wheel_peak_rad_s_[name], speed);
-      if (isWheelJoint(name) && speed > kNonzeroEpsilon) {
-        wheel_active_ = true;
-      }
-    }
-  }
-
-  static bool isSwerveJoint(const std::string & name)
-  {
-    return name == "front_left_steer_joint" || name == "front_right_steer_joint" ||
-           name == "rear_left_steer_joint" || name == "rear_right_steer_joint" ||
-           isWheelJoint(name);
-  }
-
-  static bool isWheelJoint(const std::string & name)
-  {
-    return name == "front_left_wheel_joint" || name == "front_right_wheel_joint" ||
-           name == "rear_left_wheel_joint" || name == "rear_right_wheel_joint";
-  }
-
-  std::string wheelPeaks() const
-  {
-    static const char * const names[] = {
-      "front_left_steer_joint", "front_right_steer_joint", "rear_left_steer_joint",
-      "rear_right_steer_joint", "front_left_wheel_joint", "front_right_wheel_joint",
-      "rear_left_wheel_joint", "rear_right_wheel_joint"};
-    std::ostringstream output;
-    output << std::fixed << std::setprecision(6);
-    for (std::size_t index = 0; index < std::size(names); ++index) {
-      if (index > 0) {
-        output << ',';
-      }
-      const auto found = wheel_peak_rad_s_.find(names[index]);
-      output << names[index] << ':' << (found == wheel_peak_rad_s_.end() ? 0.0 : found->second);
-    }
-    return output.str();
-  }
-
   double duration_sec_{30.0};
   std::string robot_name_;
   SteadyTime started_;
@@ -691,23 +572,14 @@ private:
   bool exit_on_nonzero_command_{false};
   bool nonzero_command_triggered_{false};
   bool cmd_vel_nonzero_{false};
-  bool motion_control_nonzero_{false};
-  bool chassis_command_nonzero_{false};
   std::size_t cmd_vel_mpc_publisher_max_{0};
   std::size_t cmd_vel_mpc_subscriber_max_{0};
-  std::size_t motion_control_publisher_max_{0};
-  std::size_t motion_control_subscriber_max_{0};
-  std::size_t chassis_cmd_publisher_max_{0};
-  std::size_t chassis_cmd_subscriber_max_{0};
   std::size_t planning_grid_publisher_max_{0};
   std::size_t planning_grid_subscriber_max_{0};
   std::set<std::string> planning_grid_publishers_;
   bool planning_grid_adapter_seen_{false};
   bool planning_grid_named_non_adapter_seen_{false};
   bool planning_grid_anonymous_endpoint_seen_{false};
-  bool wheel_active_{false};
-  std::optional<PoseSample> ground_truth_begin_;
-  std::optional<PoseSample> ground_truth_end_;
   bool observe_gazebo_transport_lidar_{false};
   std::string gazebo_lidar_transport_topic_;
   ignition::transport::Node gazebo_transport_node_;
@@ -744,8 +616,6 @@ private:
   std::optional<std::uint64_t> adapter_publication_sequence_begin_;
   std::optional<std::uint64_t> adapter_publication_sequence_end_;
   std::vector<double> adapter_status_callback_durations_sec_;
-  std::map<std::string, double> wheel_peak_rad_s_;
-
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr raw_path_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr preprocessed_guide_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr esdf_refined_guide_sub_;
@@ -753,10 +623,6 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr predicted_path_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr executed_path_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
-  rclcpp::Subscription<manda_can_control::msg::MotionCtrl>::SharedPtr motion_sub_;
-  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr chassis_cmd_sub_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ground_truth_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr gazebo_lidar_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lidar_odometry_sub_;
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr livox_input_sub_;

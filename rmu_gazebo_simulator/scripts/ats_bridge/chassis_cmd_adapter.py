@@ -17,7 +17,7 @@
 
 Ownership contract (must not be duplicated by any other node):
 
-* ``/cmd_vel_mpc``      : subscribed here, published only by ``ats_swerve_mpc``.
+* ``/cmd_vel/selected`` : subscribed here, published only by ``cmd_vel_arbiter``.
 * ``/motion_control``   : published here and nowhere else in the Gazebo profile.
 * ``<chassis_topic>``   : published here, bridged ROS -> GZ into the
   ``SwerveDrive4WS`` plugin of the spawned robot.
@@ -37,14 +37,12 @@ silent pass-through would rotate the commanded direction by psi, which is a
 
 Zero-velocity fallbacks (all produce an exact zero on both outputs):
 
-* no ``/cmd_vel_mpc`` within ``command_timeout``;
+* no ``/cmd_vel/selected`` within ``command_timeout``;
 * ``/planner/emergency_stop`` latched true;
 * missing big-yaw feedback while ``require_big_yaw_feedback`` is true.
 """
 
 from __future__ import annotations
-
-import math
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -59,14 +57,16 @@ from rclpy.qos import (
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool
 
+from chassis_command_logic import transform_command
+
 
 class ChassisCmdAdapter(Node):
-    """Bridge ``/cmd_vel_mpc`` to ``/motion_control`` and the Gazebo chassis."""
+    """Bridge ``/cmd_vel/selected`` to ``/motion_control`` and the Gazebo chassis."""
 
     def __init__(self) -> None:
         super().__init__("gz_chassis_cmd_adapter")
 
-        self.declare_parameter("input_topic", "/cmd_vel_mpc")
+        self.declare_parameter("input_topic", "/cmd_vel/selected")
         self.declare_parameter("motion_control_topic", "/motion_control")
         self.declare_parameter("chassis_topic", "/red_standard_robot1/cmd_vel")
         self.declare_parameter("joint_state_topic", "/red_standard_robot1/joint_states")
@@ -205,35 +205,32 @@ class ChassisCmdAdapter(Node):
         vy = self._clamp(vy, self.max_linear_y)
         wz = self._clamp(wz, self.max_angular_z)
 
+        psi = self._big_yaw_angle()
+        output = transform_command(
+            vx,
+            vy,
+            wz,
+            psi,
+            self.transform_with_big_yaw,
+            self.require_big_yaw,
+        )
+        if output.big_yaw_missing and self.require_big_yaw:
+            if abs(vx) > 1e-9 or abs(vy) > 1e-9 or abs(wz) > 1e-9:
+                self.get_logger().warn(
+                    "Big-yaw feedback unavailable; publishing zero chassis velocity.",
+                    throttle_duration_sec=2.0,
+                )
+
         motion = MotionCtrl()
-        motion.linear_x = vx
-        motion.linear_y = vy
-        motion.angular_z = wz
+        motion.linear_x = output.motion_vx
+        motion.linear_y = output.motion_vy
+        motion.angular_z = output.motion_wz
         self.motion_pub.publish(motion)
 
-        psi = self._big_yaw_angle()
-        if psi is None:
-            if self.require_big_yaw:
-                nonzero = abs(vx) > 1e-9 or abs(vy) > 1e-9
-                if nonzero:
-                    self.get_logger().warn(
-                        "Big-yaw feedback unavailable; publishing zero chassis velocity.",
-                        throttle_duration_sec=2.0,
-                    )
-                chassis_vx, chassis_vy = 0.0, 0.0
-                wz = 0.0 if nonzero else wz
-            else:
-                chassis_vx, chassis_vy = vx, vy
-        else:
-            cos_psi = math.cos(psi)
-            sin_psi = math.sin(psi)
-            chassis_vx = cos_psi * vx - sin_psi * vy
-            chassis_vy = sin_psi * vx + cos_psi * vy
-
         twist = Twist()
-        twist.linear.x = chassis_vx
-        twist.linear.y = chassis_vy
-        twist.angular.z = wz
+        twist.linear.x = output.chassis_vx
+        twist.linear.y = output.chassis_vy
+        twist.angular.z = output.chassis_wz
         self.chassis_pub.publish(twist)
 
 

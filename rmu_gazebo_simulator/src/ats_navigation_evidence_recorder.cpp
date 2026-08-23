@@ -45,6 +45,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rosgraph_msgs/msg/clock.hpp>
+#include <rmw/features.h>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2/exceptions.h>
 #include <tf2_ros/buffer.h>
@@ -117,10 +118,10 @@ public:
         executed_max_points_ = std::max(executed_max_points_, message->poses.size());
       });
     cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-      "/cmd_vel_mpc", path_qos,
+      "/cmd_vel/selected", path_qos,
       [this](const geometry_msgs::msg::Twist::ConstSharedPtr message) {
         const bool command_nonzero = nonzero(*message);
-        cmd_vel_nonzero_ = cmd_vel_nonzero_ || command_nonzero;
+        selected_cmd_vel_nonzero_ = selected_cmd_vel_nonzero_ || command_nonzero;
         // This recorder is a read-only arming witness for the recovery test.
         // It exits after the first command actually observed by DDS, allowing
         // the shell to cancel the active action without polling ros2cli.
@@ -132,8 +133,11 @@ public:
       });
     gazebo_lidar_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       "/" + robot_name_ + "/livox/lidar", sensor_qos,
-      [this](const sensor_msgs::msg::PointCloud2::ConstSharedPtr message) {
+      [this](
+        const sensor_msgs::msg::PointCloud2::ConstSharedPtr message,
+        const rclcpp::MessageInfo & message_info) {
         observePointCloud(gazebo_lidar_arrivals_, message->header.stamp);
+        observeGazeboLidarPublicationSequence(message_info);
       });
     localization_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/localization", sensor_qos,
@@ -283,9 +287,9 @@ public:
               << " mpc_executed_max_points=" << executed_max_points_
               << " exit_on_nonzero_command=" << yesNo(exit_on_nonzero_command_)
               << " nonzero_command_triggered=" << yesNo(nonzero_command_triggered_)
-              << " cmd_vel_nonzero=" << yesNo(cmd_vel_nonzero_)
-              << " cmd_vel_mpc_publisher_max=" << cmd_vel_mpc_publisher_max_
-              << " cmd_vel_mpc_subscriber_max=" << cmd_vel_mpc_subscriber_max_
+              << " selected_cmd_vel_nonzero=" << yesNo(selected_cmd_vel_nonzero_)
+              << " selected_cmd_vel_publisher_max=" << selected_cmd_vel_publisher_max_
+              << " selected_cmd_vel_subscriber_max=" << selected_cmd_vel_subscriber_max_
               << " planning_grid_publisher_max=" << planning_grid_publisher_max_
               << " planning_grid_subscriber_max=" << planning_grid_subscriber_max_
               << " planning_grid_publisher_names=" << planningGridPublishers()
@@ -296,6 +300,7 @@ public:
                    planning_grid_anonymous_endpoint_seen_)
               << gazeboTransportLidarStatistics()
               << arrivalStatistics("gazebo_lidar", gazebo_lidar_arrivals_)
+              << gazeboLidarDdsSequenceStatistics()
               << arrivalStatistics("lidar_odometry", lidar_odometry_arrivals_)
               << arrivalStatistics("livox_input", livox_input_arrivals_)
               << arrivalStatistics("cloud_registered", cloud_registered_arrivals_)
@@ -402,6 +407,15 @@ private:
     statistics.observeCallbackDuration(callback_started);
   }
 
+  void observeGazeboLidarPublicationSequence(const rclcpp::MessageInfo & message_info)
+  {
+    if (!gazebo_lidar_publication_sequence_supported_) {
+      return;
+    }
+    gazebo_lidar_arrivals_.observePublicationSequence(
+      message_info.get_rmw_message_info().publication_sequence_number);
+  }
+
   void onGazeboTransportLidar(const ignition::msgs::PointCloudPacked & message)
   {
     const auto callback_started = SteadyClock::now();
@@ -421,6 +435,22 @@ private:
       gazebo_transport_lidar_subscription_established_)
            << " gazebo_transport_lidar_topic=" << gazebo_lidar_transport_topic_
            << arrivalStatistics("gazebo_transport_lidar", gazebo_transport_lidar_arrivals_);
+    return output.str();
+  }
+
+  std::string gazeboLidarDdsSequenceStatistics() const
+  {
+    std::ostringstream output;
+    output << " gazebo_lidar_dds_publication_sequence_supported=" << yesNo(
+      gazebo_lidar_publication_sequence_supported_)
+           << " gazebo_lidar_dds_publication_sequence_samples="
+           << gazebo_lidar_arrivals_.publication_sequence_samples
+           << " gazebo_lidar_dds_publication_sequence_gap_count="
+           << gazebo_lidar_arrivals_.publication_sequence_gap_count
+           << " gazebo_lidar_dds_publication_sequence_missing_count="
+           << gazebo_lidar_arrivals_.publication_sequence_missing_count
+           << " gazebo_lidar_dds_publication_sequence_nonmonotonic_count="
+           << gazebo_lidar_arrivals_.publication_sequence_nonmonotonic_count;
     return output.str();
   }
 
@@ -499,10 +529,10 @@ private:
       }
       planning_grid_subscriber_max_ = std::max(
         planning_grid_subscriber_max_, count_subscribers("/rc_esdf/planning_grid"));
-      cmd_vel_mpc_publisher_max_ = std::max(
-        cmd_vel_mpc_publisher_max_, count_publishers("/cmd_vel_mpc"));
-      cmd_vel_mpc_subscriber_max_ = std::max(
-        cmd_vel_mpc_subscriber_max_, count_subscribers("/cmd_vel_mpc"));
+      selected_cmd_vel_publisher_max_ = std::max(
+        selected_cmd_vel_publisher_max_, count_publishers("/cmd_vel/selected"));
+      selected_cmd_vel_subscriber_max_ = std::max(
+        selected_cmd_vel_subscriber_max_, count_subscribers("/cmd_vel/selected"));
     } catch (const std::exception &) {
       // Shutdown can cancel the timer concurrently. Evidence collected before
       // that point remains valid and is printed after spin returns.
@@ -571,9 +601,9 @@ private:
   std::size_t executed_max_points_{0};
   bool exit_on_nonzero_command_{false};
   bool nonzero_command_triggered_{false};
-  bool cmd_vel_nonzero_{false};
-  std::size_t cmd_vel_mpc_publisher_max_{0};
-  std::size_t cmd_vel_mpc_subscriber_max_{0};
+  bool selected_cmd_vel_nonzero_{false};
+  std::size_t selected_cmd_vel_publisher_max_{0};
+  std::size_t selected_cmd_vel_subscriber_max_{0};
   std::size_t planning_grid_publisher_max_{0};
   std::size_t planning_grid_subscriber_max_{0};
   std::set<std::string> planning_grid_publishers_;
@@ -581,6 +611,8 @@ private:
   bool planning_grid_named_non_adapter_seen_{false};
   bool planning_grid_anonymous_endpoint_seen_{false};
   bool observe_gazebo_transport_lidar_{false};
+  const bool gazebo_lidar_publication_sequence_supported_{
+    rmw_feature_supported(RMW_FEATURE_MESSAGE_INFO_PUBLICATION_SEQUENCE_NUMBER)};
   std::string gazebo_lidar_transport_topic_;
   ignition::transport::Node gazebo_transport_node_;
   mutable std::mutex gazebo_transport_lidar_mutex_;

@@ -94,6 +94,11 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(FILES
+  scripts/ats_bridge/chassis_command_logic.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 
 if(BUILD_TESTING)
   add_executable(test_swerve_kinematics
@@ -109,6 +114,12 @@ if(BUILD_TESTING)
   target_compile_features(test_evidence_statistics PRIVATE cxx_std_17)
   target_include_directories(test_evidence_statistics PRIVATE include)
   add_test(NAME test_evidence_statistics COMMAND test_evidence_statistics)
+
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(
+    NAME test_chassis_command_logic
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chassis_command_logic.py
+  )
 
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()

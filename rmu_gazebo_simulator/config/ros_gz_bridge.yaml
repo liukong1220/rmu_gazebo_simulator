@@ -1,7 +1,7 @@
 # Chassis actuator command: ROS -> GZ into the SwerveDrive4WS plugin.
 # The only ROS-side publisher of this topic is gz_chassis_cmd_adapter, which in
-# turn is the only subscriber of /cmd_vel_mpc. Do not add a second publisher:
-# the chain requires a single owner between MPC and the chassis.
+# turn is the only subscriber of /cmd_vel/selected. Do not add a second publisher:
+# cmd_vel_arbiter is the sole selected-velocity owner before this chassis bridge.
 - ros_topic_name: "/<robot_name>/cmd_vel"
   gz_topic_name: "/<robot_name>/cmd_vel"
   ros_type_name: "geometry_msgs/msg/Twist"

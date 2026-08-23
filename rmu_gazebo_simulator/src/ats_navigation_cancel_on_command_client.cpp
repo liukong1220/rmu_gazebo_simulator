@@ -56,7 +56,7 @@ public:
 
     const auto command_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     command_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-      "/cmd_vel_mpc", command_qos,
+      "/cmd_vel/selected", command_qos,
       std::bind(&CancelOnCommandClient::onCommand, this, std::placeholders::_1));
     action_client_ = rclcpp_action::create_client<NavigateToPose>(this, action_name_);
 
@@ -84,7 +84,7 @@ public:
     std::cout << "ATS_CANCEL_ON_COMMAND_RESULT"
               << " goal_sent=" << yesNo(goal_sent_)
               << " goal_accepted=" << yesNo(goal_accepted_)
-              << " cmd_vel_nonzero=" << yesNo(command_nonzero_)
+              << " selected_cmd_vel_nonzero=" << yesNo(command_nonzero_)
               << " cancel_request_sent=" << yesNo(cancel_request_sent_)
               << " cancel_response_received=" << yesNo(cancel_response_received_)
               << " cancel_accepted=" << yesNo(cancel_accepted_)

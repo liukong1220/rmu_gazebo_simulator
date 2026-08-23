@@ -26,13 +26,15 @@ Chain wired by this file:
       -> ats_rog_map                /rog_map/*
       -> ats_rog_map_adapter        /rc_esdf/planning_grid
       -> minco_planner              /minco/raw_path + /minco/reference_path
-      -> ats_swerve_mpc             /cmd_vel_mpc
+      -> ats_swerve_mpc             /cmd_vel/autonomy_raw
+      -> cmd_vel_arbiter            /cmd_vel/selected
       -> gz_chassis_cmd_adapter     /motion_control + <robot>/cmd_vel
       -> Gazebo chassis
 
 Ownership rules enforced here:
 
-* ``/cmd_vel_mpc``            single publisher: ats_swerve_mpc.
+* ``/cmd_vel/autonomy_raw``   single publisher: ats_swerve_mpc.
+* ``/cmd_vel/selected``       single publisher: cmd_vel_arbiter.
 * ``/motion_control``         single publisher: gz_chassis_cmd_adapter.
 * ``/rc_esdf/planning_grid``  single publisher: ats_rog_map_adapter.
 * ``odom -> base_footprint`` / ``odom -> gimbal_yaw_odom``  single publisher:
@@ -469,6 +471,11 @@ def generate_launch_description() -> LaunchDescription:
             params_file,
             {
                 "use_sim_time": use_sim_time,
+                # The Gazebo profile owns this dynamic odom output. Keep its
+                # lookup endpoints explicit instead of relying on a
+                # real-vehicle YAML fallback.
+                "lidar_frame": "front_mid360",
+                "robot_base_frame": "gimbal_yaw_odom",
                 "base_frame": "",
             },
         ],
@@ -636,7 +643,7 @@ def generate_launch_description() -> LaunchDescription:
             params_file,
             {
                 "use_sim_time": use_sim_time,
-                "command_topic": "/cmd_vel_mpc",
+                "command_topic": "/cmd_vel/autonomy_raw",
                 "require_localization_status": True,
                 "require_gimbal_status": ParameterValue(
                     require_gimbal_status, value_type=bool
@@ -648,7 +655,27 @@ def generate_launch_description() -> LaunchDescription:
         arguments=["--ros-args", "--log-level", log_level],
     )
 
-    # Single owner between MPC and the Gazebo chassis.
+    # Gazebo has no serial heartbeat or fake/chassis transform chain. The
+    # arbiter still owns source priority and ExecutionCommand lease handling.
+    cmd_vel_arbiter = Node(
+        package="ats_cmd_vel_arbiter",
+        executable="cmd_vel_arbiter_node",
+        name="cmd_vel_arbiter",
+        output="screen",
+        parameters=[
+            params_file,
+            {
+                "use_sim_time": use_sim_time,
+                "manual_cmd_vel_topic": "/cmd_vel",
+                "autonomy_cmd_vel_topic": "/cmd_vel/autonomy_raw",
+                "selected_cmd_vel_topic": "/cmd_vel/selected",
+                "require_serial_link": False,
+            },
+        ],
+        arguments=["--ros-args", "--log-level", log_level],
+    )
+
+    # Single chassis owner downstream of the selected velocity boundary.
     chassis_adapter = Node(
         package="rmu_gazebo_simulator",
         executable="chassis_cmd_adapter.py",
@@ -657,7 +684,7 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[
             {
                 "use_sim_time": use_sim_time,
-                "input_topic": "/cmd_vel_mpc",
+                "input_topic": "/cmd_vel/selected",
                 "motion_control_topic": "/motion_control",
                 "chassis_topic": ["/", robot_name, "/cmd_vel"],
                 "joint_state_topic": ["/", robot_name, "/joint_states"],
@@ -728,6 +755,7 @@ def generate_launch_description() -> LaunchDescription:
             goal_manager,
             minco,
             mpc,
+            cmd_vel_arbiter,
             chassis_adapter,
             executed_path,
         ],

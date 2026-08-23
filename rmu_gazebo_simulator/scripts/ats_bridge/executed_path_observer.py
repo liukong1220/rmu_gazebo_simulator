@@ -15,7 +15,7 @@
 
 """Publish the path the robot actually travelled, for RViz and for scoring.
 
-This is a read-only observer. It never touches ``/cmd_vel_mpc`` or
+This is a read-only observer. It never touches ``/cmd_vel/selected`` or
 ``/motion_control`` ownership, and it is not a copy of any planned path:
 
 * the samples come from ``/localization`` (the formal localization output of

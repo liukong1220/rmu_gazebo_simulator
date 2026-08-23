@@ -34,6 +34,7 @@ struct EvidenceStatistics
   std::size_t samples{0};
   std::optional<SteadyTime> previous_receipt;
   std::optional<std::int64_t> previous_stamp_ns;
+  std::optional<std::uint64_t> previous_publication_sequence;
   std::vector<double> wall_intervals_sec;
   std::vector<double> stamp_intervals_sec;
   std::vector<double> stamp_ages_sec;
@@ -42,6 +43,10 @@ struct EvidenceStatistics
   std::size_t backward_stamp_count{0};
   std::size_t invalid_stamp_count{0};
   std::size_t future_stamp_count{0};
+  std::size_t publication_sequence_samples{0};
+  std::size_t publication_sequence_gap_count{0};
+  std::size_t publication_sequence_missing_count{0};
+  std::size_t publication_sequence_nonmonotonic_count{0};
 
   void observeReceipt(const SteadyTime receipt = SteadyClock::now())
   {
@@ -83,6 +88,24 @@ struct EvidenceStatistics
     if (age < 0.0) {
       ++future_stamp_count;
     }
+  }
+
+  // A publication sequence gap tells the receiver that messages were emitted
+  // between two accepted samples. It is deliberately separate from the ROS
+  // header stamp, which may be sparse before a publisher writes to DDS.
+  void observePublicationSequence(const std::uint64_t sequence)
+  {
+    if (previous_publication_sequence) {
+      if (sequence > *previous_publication_sequence + 1U) {
+        ++publication_sequence_gap_count;
+        publication_sequence_missing_count +=
+          static_cast<std::size_t>(sequence - *previous_publication_sequence - 1U);
+      } else if (sequence <= *previous_publication_sequence) {
+        ++publication_sequence_nonmonotonic_count;
+      }
+    }
+    previous_publication_sequence = sequence;
+    ++publication_sequence_samples;
   }
 
   void observeCallbackDuration(

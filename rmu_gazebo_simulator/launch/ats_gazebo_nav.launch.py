@@ -422,6 +422,21 @@ def generate_launch_description() -> LaunchDescription:
                 # Keep this override local to the simulation profile.
                 "mapping.gravity": [0.0, 0.0, -9.81],
                 "mapping.gravity_init": [0.0, 0.0, -9.81],
+                # The Gazebo IMU reports acceleration in m/s^2: a stationary
+                # measurement of this sensor is (0, 0, 9.8), not (0, 0, 1.0) g.
+                # The root parameter file declares g units (acc_norm 1.0) with a
+                # 6.0 saturation bound, which is calibrated for the real IMU.
+                # Applied to this sensor both values break the estimator:
+                # h_model_IMU_output scales the residual by G_m_s2 / acc_norm,
+                # so g units inflate gravity to about 96 m/s^2, while every
+                # sample already exceeds 0.99 * satu_acc and permanently zeroes
+                # the Z acceleration residual. The observed effect is a Z that
+                # climbs without bound while chassis ground truth stays at
+                # 0.300 m, which drives repeated ROGMap out-of-range resets and
+                # aborts the goal. Keep this override local to the simulation
+                # profile so the real-vehicle calibration is untouched.
+                "mapping.acc_norm": 9.81,
+                "mapping.satu_acc": 30.0,
                 "mapping.extrinsic_T": [0.0, 0.0, 0.0],
                 "mapping.extrinsic_R": [
                     1.0,

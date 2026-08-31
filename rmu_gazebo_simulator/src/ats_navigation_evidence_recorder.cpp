@@ -52,6 +52,7 @@
 #include <tf2_ros/transform_listener.h>
 
 #include "rmu_gazebo_simulator/evidence_statistics.hpp"
+#include "rmu_gazebo_simulator/tf_establishment_tracker.hpp"
 
 namespace
 {
@@ -59,6 +60,7 @@ namespace
 using rmu_gazebo_simulator::EvidenceStatistics;
 using rmu_gazebo_simulator::SteadyClock;
 using rmu_gazebo_simulator::SteadyTime;
+using rmu_gazebo_simulator::TfEstablishmentTracker;
 
 class NavigationEvidenceRecorder final : public rclcpp::Node
 {
@@ -321,9 +323,21 @@ public:
                    localization_status_observation_age_sec_, 0.95)
               << " localization_status_observation_age_p99_s=" << percentile(
                    localization_status_observation_age_sec_, 0.99)
-              << " tf_lookup_attempts=" << tf_lookup_attempts_
-              << " tf_lookup_successes=" << tf_lookup_successes_
-              << " tf_lookup_failures=" << tf_lookup_failures_
+              << " tf_lookup_attempts=" << tf_tracker_.attempts()
+              << " tf_lookup_successes=" << tf_tracker_.successes()
+              << " tf_lookup_failures=" << tf_tracker_.failures()
+              // The recorder polls map -> gimbal_yaw_odom from the moment it
+              // spins, which precedes the first localization_fusion
+              // map -> odom publication, so leading failures are an absent
+              // transform rather than a broken one. Admission judges the
+              // post-establishment count, and tf_chain_established
+              // distinguishes a healthy run from one where the chain never
+              // came up (both report zero post-establishment failures).
+              << " tf_chain_established=" << (tf_tracker_.established() ? "yes" : "no")
+              << " tf_lookup_failures_before_establishment="
+              << tf_tracker_.failuresBeforeEstablishment()
+              << " tf_lookup_failures_after_establishment="
+              << tf_tracker_.failuresAfterEstablishment()
               << " tf_lookup_max_ms=" << tf_lookup_max_ms_
               << " dds_queue_drop_counter=unverified_no_portable_rmw_counter"
               << " adapter_status_callback_count=" << adapter_status_callback_durations_sec_.size()
@@ -544,13 +558,12 @@ private:
     if (!tf_buffer_) {
       return;
     }
-    ++tf_lookup_attempts_;
     const auto started = SteadyClock::now();
     try {
       (void)tf_buffer_->lookupTransform("map", "gimbal_yaw_odom", tf2::TimePointZero);
-      ++tf_lookup_successes_;
+      tf_tracker_.observeSuccess();
     } catch (const tf2::TransformException &) {
-      ++tf_lookup_failures_;
+      tf_tracker_.observeFailure();
     }
     tf_lookup_max_ms_ = std::max(
       tf_lookup_max_ms_,
@@ -636,9 +649,7 @@ private:
   std::vector<double> localization_status_observation_age_sec_;
   std::uint8_t localization_status_last_state_{
     ats_navigation_interfaces::msg::LocalizationStatus::STATE_UNINITIALIZED};
-  std::size_t tf_lookup_attempts_{0};
-  std::size_t tf_lookup_successes_{0};
-  std::size_t tf_lookup_failures_{0};
+  TfEstablishmentTracker tf_tracker_;
   double tf_lookup_max_ms_{0.0};
   bool map_status_ready_seen_{false};
   std::optional<SteadyTime> last_map_status_received_;

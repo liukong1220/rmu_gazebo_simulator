@@ -115,6 +115,13 @@ if(BUILD_TESTING)
   target_include_directories(test_evidence_statistics PRIVATE include)
   add_test(NAME test_evidence_statistics COMMAND test_evidence_statistics)
 
+  add_executable(test_tf_establishment_tracker
+    tests/test_tf_establishment_tracker.cpp
+  )
+  target_compile_features(test_tf_establishment_tracker PRIVATE cxx_std_17)
+  target_include_directories(test_tf_establishment_tracker PRIVATE include)
+  add_test(NAME test_tf_establishment_tracker COMMAND test_tf_establishment_tracker)
+
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(
     NAME test_chassis_command_logic

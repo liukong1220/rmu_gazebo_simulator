@@ -50,8 +50,13 @@ robots:
   rmuc_2025:
     - name: "red_standard_robot1"
       color: "red"
-      x_pose: "3.4"
-      y_pose: "9.5"
+      # RMUC 2025 红方区最大净空点（1.46 m 全向），离北侧观众台围栏与
+      # 南侧斜墙均 > 1.4 m。旧出生点 (3.4, 9.5) 净空仅 0.79 m：LiDAR
+      # 扫到北侧 0.8 m 围栏后 ROGMap 投影把出生 cell 打成占据，MINCO
+      # swept footprint gate 拒绝全部重规划并死锁在原地（domain 196/198
+      # 的 progress watchdog exhausted bounded replans）。
+      x_pose: "4.75"
+      y_pose: "9.00"
       z_pose: "0.28"
       yaw: "0.0"
 

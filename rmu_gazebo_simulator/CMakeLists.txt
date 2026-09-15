@@ -91,6 +91,8 @@ install(PROGRAMS
   scripts/referee_system/simple_competition_1v1.py
   scripts/ats_bridge/chassis_cmd_adapter.py
   scripts/ats_bridge/executed_path_observer.py
+  scripts/ats_bridge/gazebo_gt_odometry_relay.py
+  scripts/ats_bridge/gazebo_gt_registered_scan_relay.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -121,6 +123,13 @@ if(BUILD_TESTING)
   target_compile_features(test_tf_establishment_tracker PRIVATE cxx_std_17)
   target_include_directories(test_tf_establishment_tracker PRIVATE include)
   add_test(NAME test_tf_establishment_tracker COMMAND test_tf_establishment_tracker)
+
+  add_executable(test_dynamic_transform_freshness
+    tests/test_dynamic_transform_freshness.cpp
+  )
+  target_compile_features(test_dynamic_transform_freshness PRIVATE cxx_std_17)
+  target_include_directories(test_dynamic_transform_freshness PRIVATE include)
+  add_test(NAME test_dynamic_transform_freshness COMMAND test_dynamic_transform_freshness)
 
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(

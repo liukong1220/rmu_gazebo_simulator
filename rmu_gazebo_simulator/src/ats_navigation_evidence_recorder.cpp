@@ -37,6 +37,7 @@
 #include <ats_navigation_interfaces/msg/planning_map_status.hpp>
 #include <ats_navigation_interfaces/msg/localization_status.hpp>
 #include <builtin_interfaces/msg/time.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <ignition/msgs/pointcloud_packed.pb.h>
 #include <ignition/transport/Node.hh>
@@ -51,12 +52,14 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
+#include "rmu_gazebo_simulator/dynamic_transform_freshness.hpp"
 #include "rmu_gazebo_simulator/evidence_statistics.hpp"
 #include "rmu_gazebo_simulator/tf_establishment_tracker.hpp"
 
 namespace
 {
 
+using rmu_gazebo_simulator::DynamicTransformFreshness;
 using rmu_gazebo_simulator::EvidenceStatistics;
 using rmu_gazebo_simulator::SteadyClock;
 using rmu_gazebo_simulator::SteadyTime;
@@ -185,6 +188,10 @@ public:
         previous_clock_stamp_ns_ = stamp_ns;
         previous_clock_receipt_ = receipt;
         latest_clock_stamp_ns_ = stamp_ns;
+        // The dynamic-TF freshness witness needs the consumer's reference
+        // clock to measure age and staleness, so it must see every /clock
+        // sample, not only the ones the arrival statistics keep.
+        tf_freshness_.observeClock(stamp_ns);
         clock_arrivals_.observeCallbackDuration(callback_started);
       });
     localization_status_sub_ = create_subscription<
@@ -339,6 +346,34 @@ public:
               << " tf_lookup_failures_after_establishment="
               << tf_tracker_.failuresAfterEstablishment()
               << " tf_lookup_max_ms=" << tf_lookup_max_ms_
+              // Dynamic-edge freshness for map -> gimbal_yaw_odom, from the
+              // source stamp carried by the transform the lookup returned.
+              // Every field below is read by a P1 admission gate or by its
+              // fail-closed sample-count check; the runner fails closed when
+              // an older recorder binary omits any of them.
+              << " tf_dynamic_samples=" << tf_freshness_.samples()
+              << " tf_dynamic_distinct_stamp_updates="
+              << tf_freshness_.distinctStampUpdates()
+              << " tf_dynamic_duplicate_stamps=" << tf_freshness_.duplicateStamps()
+              << " tf_dynamic_backward_stamps=" << tf_freshness_.backwardStamps()
+              << " tf_dynamic_invalid_stamps=" << tf_freshness_.invalidStamps()
+              << " tf_dynamic_future_stamps=" << tf_freshness_.futureStamps()
+              << " tf_dynamic_age_p50_s=" << tfDynamicAge(0.50)
+              << " tf_dynamic_age_p99_s=" << tfDynamicAge(0.99)
+              << " tf_dynamic_age_max_s=" << tfDynamicAge(1.00)
+              << " tf_dynamic_age_floor_s=" << optionalDouble(
+                   tf_freshness_.ageFloorSec())
+              << " tf_dynamic_age_samples=" << tf_freshness_.ageSamples()
+              << " tf_dynamic_staleness_samples=" << tf_freshness_.stalenessSamples()
+              << " tf_dynamic_stamp_staleness_p50_s=" << tfDynamicStaleness(0.50)
+              << " tf_dynamic_stamp_staleness_p99_s=" << tfDynamicStaleness(0.99)
+              << " tf_dynamic_stamp_staleness_max_s=" << tfDynamicStaleness(1.00)
+              << " tf_dynamic_backward_clock_samples="
+              << tf_freshness_.backwardClockSamples()
+              << " tf_dynamic_update_gap_samples=" << tf_freshness_.updateGapSamples()
+              << " tf_dynamic_update_gap_p50_s=" << tfDynamicUpdateGap(0.50)
+              << " tf_dynamic_update_gap_p99_s=" << tfDynamicUpdateGap(0.99)
+              << " tf_dynamic_update_gap_max_s=" << tfDynamicUpdateGap(1.00)
               << " dds_queue_drop_counter=unverified_no_portable_rmw_counter"
               << " adapter_status_callback_count=" << adapter_status_callback_durations_sec_.size()
               << " adapter_status_callback_p50_s=" << percentile(
@@ -511,6 +546,35 @@ private:
     return output.str();
   }
 
+  // Dynamic-TF percentiles print 0.000000 on an empty sample set, never
+  // "unverified": the runner's fail-closed sample-count gates run before any
+  // threshold is consulted, and the behavioral suite pins the numeric shape
+  // of a no-sample line (an "unverified" token would defeat those gates by
+  // parsing as a missing field instead of an empty distribution).
+  static std::string tfDynamicPercentile(
+    const std::vector<double> & values, const double probability)
+  {
+    std::ostringstream output;
+    output << std::fixed << std::setprecision(6)
+           << rmu_gazebo_simulator::percentile(values, probability);
+    return output.str();
+  }
+
+  std::string tfDynamicAge(const double probability) const
+  {
+    return tfDynamicPercentile(tf_freshness_.agesSec(), probability);
+  }
+
+  std::string tfDynamicStaleness(const double probability) const
+  {
+    return tfDynamicPercentile(tf_freshness_.stalenessSec(), probability);
+  }
+
+  std::string tfDynamicUpdateGap(const double probability) const
+  {
+    return tfDynamicPercentile(tf_freshness_.updateGapsSec(), probability);
+  }
+
   static void observeInterval(
     std::optional<SteadyTime> & previous, std::optional<double> & maximum)
   {
@@ -560,8 +624,17 @@ private:
     }
     const auto started = SteadyClock::now();
     try {
-      (void)tf_buffer_->lookupTransform("map", "gimbal_yaw_odom", tf2::TimePointZero);
+      // The dynamic freshness witness must judge the source stamp of the
+      // transform this lookup returns (transform.header.stamp). A
+      // TimePointZero query whose result is discarded proves only that the
+      // chain resolves, which is exactly the gap the freshness evidence
+      // exists to close: a broadcaster that died leaves the buffer replaying
+      // its last transform, and only the carried stamp keeps advancing with
+      // the reference clock in a live chain.
+      const geometry_msgs::msg::TransformStamped transform =
+        tf_buffer_->lookupTransform("map", "gimbal_yaw_odom", tf2::TimePointZero);
       tf_tracker_.observeSuccess();
+      tf_freshness_.observeLookup(toNanoseconds(transform.header.stamp));
     } catch (const tf2::TransformException &) {
       tf_tracker_.observeFailure();
     }
@@ -650,6 +723,7 @@ private:
   std::uint8_t localization_status_last_state_{
     ats_navigation_interfaces::msg::LocalizationStatus::STATE_UNINITIALIZED};
   TfEstablishmentTracker tf_tracker_;
+  DynamicTransformFreshness tf_freshness_;
   double tf_lookup_max_ms_{0.0};
   bool map_status_ready_seen_{false};
   std::optional<SteadyTime> last_map_status_received_;

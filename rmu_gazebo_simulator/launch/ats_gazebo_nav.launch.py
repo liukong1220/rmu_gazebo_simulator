@@ -114,6 +114,8 @@ def generate_launch_description() -> LaunchDescription:
         "gicp_max_correction_translation"
     )
     gicp_max_correction_yaw = LaunchConfiguration("gicp_max_correction_yaw")
+    observation_timeout_s = LaunchConfiguration("observation_timeout_s")
+    observation_lost_timeout_s = LaunchConfiguration("observation_lost_timeout_s")
 
     rog_map_owned = IfCondition(
         PythonExpression(["'", planning_grid_owner, "' == 'rog_map'"])
@@ -198,6 +200,22 @@ def generate_launch_description() -> LaunchDescription:
             "gicp_max_correction_yaw",
             default_value="1.5",
             description="Fusion gate for accepted GICP yaw corrections [rad].",
+        ),
+        DeclareLaunchArgument(
+            "observation_timeout_s",
+            default_value="600.0",
+            description=(
+                "Fusion observation degraded timeout [s]. Gazebo nav default is "
+                "long to avoid LOST flip under sparse GICP; stress tests may lower it."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "observation_lost_timeout_s",
+            default_value="3600.0",
+            description=(
+                "Fusion observation LOST timeout [s]. Keep long for nominal Gazebo "
+                "nav; LOST async reloc stress should pass a short value explicitly."
+            ),
         ),
         DeclareLaunchArgument("robot_name", default_value="red_standard_robot1"),
         DeclareLaunchArgument(
@@ -679,6 +697,21 @@ def generate_launch_description() -> LaunchDescription:
                         'initial_pose_force_registration_window_s': 5.0,
                         'max_registration_error': -1.0,
                         'relax_convergence_for_sim': True,
+                        # Coarse-to-fine windowed alignment. Keep overlap gate off
+                        # in Gazebo thin-wall priors; real-robot params keep 0.30.
+                        'registration_mode': 'initial_guess',
+                        'accumulate_frames': 3,
+                        'fine_alignment.enable': True,
+                        'fine_alignment.coarse_first_window_only': True,
+                        'fine_alignment.max_correspondence_distance': 0.60,
+                        'min_overlap_ratio': 0.0,
+                        'follow_localization_status': True,
+                        'auto_multi_guess_on_lost': True,
+                        'force_registration_when_lost': True,
+                        # Gazebo fullfield prior: height filter can starve Mid360
+                        # returns; keep off unless prior/sensor z are aligned.
+                        'height_filter.enable': False,
+
                         'init_pose': [ix, iy, iz, ir, ip, iyaw],
                     },
                 ],
@@ -738,8 +771,12 @@ def generate_launch_description() -> LaunchDescription:
                 # LOST and starved ROG adapter (not tracking x3355). Keep
                 # initial map->odom TRACKING unless odometry itself goes stale.
                 "observation_topic": "/relocalization_observation",
-                "observation_timeout_s": 600.0,
-                "observation_lost_timeout_s": 3600.0,
+                "observation_timeout_s": ParameterValue(
+                    observation_timeout_s, value_type=float
+                ),
+                "observation_lost_timeout_s": ParameterValue(
+                    observation_lost_timeout_s, value_type=float
+                ),
                 # d22: map ready but health failed localization_state=4 (LOST).
                 # Fusion still used default odom_timeout_s=0.5; under Gazebo load
                 # odom callbacks lag and flip TRACKING->LOST. ROGMap already has
@@ -755,6 +792,13 @@ def generate_launch_description() -> LaunchDescription:
                     gicp_max_correction_translation, value_type=float
                 ),
                 "max_correction_yaw": ParameterValue(
+                    gicp_max_correction_yaw, value_type=float
+                ),
+                # Gazebo prior-reloc: LOST gate matches the raised sim correction budget.
+                "lost_max_correction_translation": ParameterValue(
+                    gicp_max_correction_translation, value_type=float
+                ),
+                "lost_max_correction_yaw": ParameterValue(
                     gicp_max_correction_yaw, value_type=float
                 ),
             },
@@ -971,6 +1015,11 @@ def generate_launch_description() -> LaunchDescription:
                 "goal_admission_position_tolerance": 0.15,
                 "goal_admission_position_step": 0.05,
                 "goal_admission_extra_margin": 0.0,
+                # d21: first short south path OK, then gen173 committed
+                # length_ratio=5.496 lateral=7.424 and drove north of spawn.
+                # Gate nominal commits only (escape exempt). MuJoCo keeps 0=off.
+                "commit_max_length_ratio": 2.5,
+                "commit_max_lateral_deviation_m": 3.0,
             },
         ],
         arguments=["--ros-args", "--log-level", log_level],

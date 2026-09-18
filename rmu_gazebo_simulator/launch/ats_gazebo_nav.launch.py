@@ -116,6 +116,13 @@ def generate_launch_description() -> LaunchDescription:
     gicp_max_correction_yaw = LaunchConfiguration("gicp_max_correction_yaw")
     observation_timeout_s = LaunchConfiguration("observation_timeout_s")
     observation_lost_timeout_s = LaunchConfiguration("observation_lost_timeout_s")
+    gicp_lost_max_correction_translation = LaunchConfiguration(
+        "gicp_lost_max_correction_translation"
+    )
+    gicp_lost_max_correction_yaw = LaunchConfiguration("gicp_lost_max_correction_yaw")
+    fusion_min_observation_quality = LaunchConfiguration(
+        "fusion_min_observation_quality"
+    )
 
     rog_map_owned = IfCondition(
         PythonExpression(["'", planning_grid_owner, "' == 'rog_map'"])
@@ -189,17 +196,81 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             "gicp_max_correction_translation",
-            default_value="5.0",
+            default_value="2.0",
             description=(
-                "Fusion gate for accepted GICP corrections [m]. Raised above the "
-                "real-robot 2.0 default so Gazebo prior-reloc tests can recover "
-                "from intentional initialpose offsets within a local basin."
+                "Fusion TRACKING gate for accepted GICP corrections [m]. Matches the "
+                "real-robot 2.0 default. Only LOST recovery may exceed it, via "
+                "gicp_lost_max_correction_translation."
             ),
         ),
         DeclareLaunchArgument(
             "gicp_max_correction_yaw",
+            default_value="1.0",
+            description=(
+                "Fusion TRACKING gate for accepted GICP yaw corrections [rad]. "
+                "Matches the real-robot 1.0 default."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "gicp_lost_max_correction_translation",
+            default_value="5.0",
+            description=(
+                "Fusion LOST-only gate for accepted GICP corrections [m]. Fusion "
+                "clamps it to at least the TRACKING budget."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "gicp_lost_max_correction_yaw",
             default_value="1.5",
-            description="Fusion gate for accepted GICP yaw corrections [rad].",
+            description=(
+                "Fusion LOST-only gate for accepted GICP yaw corrections [rad]."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "fusion_min_observation_quality",
+            default_value="0.0",
+            description=(
+                "Fusion minimum observation quality gate. Stays 0.0 until the "
+                "correct/wrong candidate quality distribution is measured; the "
+                "acceptance-matrix harness raises it explicitly."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "gicp_confirmation_count",
+            default_value="2",
+            description=(
+                "Consecutive consistent GICP scans required before an accepted "
+                "observation. 1 lets a single local minimum reach fusion."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "gicp_min_overlap_ratio",
+            default_value="0.20",
+            description=(
+                "GICP hard overlap gate, selected from the measured fine-stage "
+                "distribution in log/gazebo_reloc_matrix (dev3_px_auto domain181: "
+                "correct 0.234 vs 65 wrong candidates <= 0.171). The real-robot 0.30 "
+                "is NOT copied here; Gazebo prior/sensor density caps overlap lower."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "gicp_ambiguity_min_score_margin",
+            default_value="0.05",
+            description=(
+                "Best-vs-second-best combined score margin below which a lattice "
+                "sweep is ambiguous and stays LOST. Same sample: correct score 1.014 "
+                "vs best wrong 1.030 at weight_overlap=1.0; the overlap reweighting "
+                "widens that gap, so 0.05 rejects near-ties without blocking recovery."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "gicp_candidate_log_path",
+            default_value="",
+            description=(
+                "Append per-candidate diagnostics CSV (seed, guess, inliers, overlap, "
+                "error, information spectrum, score, reject reason) to this path. "
+                "Empty disables offline replay collection."
+            ),
         ),
         DeclareLaunchArgument(
             "observation_timeout_s",
@@ -268,6 +339,17 @@ def generate_launch_description() -> LaunchDescription:
             ),
         ),
         DeclareLaunchArgument(
+            "launch_planning",
+            default_value="true",
+            description=(
+                "Start the planning chain (ROGMap, adapter, goal manager, MINCO, MPC, "
+                "arbiter, chassis adapter). Localization-only regressions such as the "
+                "relocalization acceptance matrix set this false: the planning nodes are "
+                "not part of the localization contract and their CPU share starves the "
+                "lidar bridge on a 4-core host, which shows up as dropped scans."
+            ),
+        ),
+        DeclareLaunchArgument(
             "planning_grid_owner",
             default_value="rog_map",
             description="Single owner of /rc_esdf/planning_grid: rog_map or rc_esdf",
@@ -294,11 +376,12 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             "projection_rate_hz",
-            default_value="2.0",
+            default_value="0.2",
             description=(
                 "ROGMap projection publication rate for this Gazebo profile. "
-                "It must remain above 1 Hz because ats_goal_manager keeps a "
-                "one-second immutable planning-snapshot lease."
+                "Keep the controlled 0.2 Hz default so a MINCO candidate can "
+                "commit against one immutable snapshot before the next update; "
+                "the five-second planning-snapshot lease remains fail-closed."
             ),
         ),
         DeclareLaunchArgument(
@@ -663,6 +746,18 @@ def generate_launch_description() -> LaunchDescription:
         ip = float(context.launch_configurations.get('initial_map_to_odom_pitch', '0.0'))
         iyaw = float(context.launch_configurations.get('initial_map_to_odom_yaw', '0.0'))
         prior = context.launch_configurations.get('prior_pcd_file', '')
+        confirmation_count = int(
+            context.launch_configurations.get('gicp_confirmation_count', '2')
+        )
+        min_overlap_ratio = float(
+            context.launch_configurations.get('gicp_min_overlap_ratio', '0.0')
+        )
+        ambiguity_margin = float(
+            context.launch_configurations.get('gicp_ambiguity_min_score_margin', '0.0')
+        )
+        candidate_log_path = context.launch_configurations.get(
+            'gicp_candidate_log_path', ''
+        )
         return [
             Node(
                 package='small_gicp_relocalization',
@@ -692,10 +787,22 @@ def generate_launch_description() -> LaunchDescription:
                         'registered_leaf_size': 0.08,
                         'max_dist_sq': 4.5,
                         'min_inliers': 150,
-                        'confirmation_count': 1,
+                        # A single-frame local minimum must not reach fusion:
+                        # require consecutive scans that agree AND whose implied
+                        # relative motion matches odometry.
+                        'confirmation_count': confirmation_count,
+                        'confirmation_translation_tolerance': 0.15,
+                        'confirmation_yaw_tolerance': 0.10,
+                        'confirmation_min_interval_s': 0.05,
+                        'confirmation_motion_translation_tolerance': 0.25,
+                        'confirmation_motion_yaw_tolerance': 0.15,
                         'registration_interval_s': 0.25,
                         'initial_pose_force_registration_window_s': 5.0,
                         'max_registration_error': -1.0,
+                        # relax_convergence_for_sim now only applies inside the
+                        # /initialpose force window and only waives the optimizer
+                        # converged flag; finite error / overlap / information /
+                        # finite transform gates are never bypassed.
                         'relax_convergence_for_sim': True,
                         # Coarse-to-fine windowed alignment. Keep overlap gate off
                         # in Gazebo thin-wall priors; real-robot params keep 0.30.
@@ -704,7 +811,47 @@ def generate_launch_description() -> LaunchDescription:
                         'fine_alignment.enable': True,
                         'fine_alignment.coarse_first_window_only': True,
                         'fine_alignment.max_correspondence_distance': 0.60,
-                        'min_overlap_ratio': 0.0,
+                        'min_overlap_ratio': min_overlap_ratio,
+                        # Fine-stage information gate. Pooled over two adversarial
+                        # dev3_px_auto runs (191 wrong / 4 correct fine candidates):
+                        # correct min eigenvalue 1.53e4, every wrong one <= 8.4e3.
+                        # A partial wall match leaves the weakest DOF unconstrained,
+                        # which is exactly what this eigenvalue measures. It is only
+                        # comparable at fixed source density, so it is an ACCEPT gate;
+                        # the sparse screen stage never applies it.
+                        'min_information_eigenvalue': 1.0e4,
+                        # Candidate scheduling: layered interleaved order, a per-scan
+                        # time budget, and a cursor that resumes the sweep next scan.
+                        # The coarse pass only SCREENS on a sparse cloud (cost is
+                        # ~linear in source points, so this sets candidate throughput);
+                        # only the best few screened candidates pay for a full-density
+                        # fine pass, which is the sole acceptance authority.
+                        'multi_guess.time_budget_s': 1.5,
+                        'multi_guess.max_candidates_per_scan': 48,
+                        'multi_guess.screen_leaf_size': 0.70,
+                        'multi_guess.max_fine_per_scan': 2,
+                        'multi_guess.candidate_log_path': candidate_log_path,
+                        'multi_guess.log_candidates': False,
+                        # Measured on the adversarial dev3_px_auto sample: registration
+                        # error alone RANKS THE WRONG SOLUTION FIRST (wrong 0.107 vs
+                        # correct 0.144) because a partial wall match has few but
+                        # well-fitted inliers. The explained-point ratio is what
+                        # separates them (correct 0.234 vs 65 wrong <= 0.171), so
+                        # overlap outweighs error in the combined score.
+                        'candidate_score.weight_error': 1.0,
+                        'candidate_score.weight_overlap': 2.0,
+                        'candidate_score.weight_information': 0.5,
+                        'candidate_score.weight_motion': 0.5,
+                        # Measured bias: during a genuine LOST recovery the CORRECT
+                        # candidate is the one FURTHEST from the poisoned seed
+                        # (prior_deviation 3.00 vs wrong <= 2.57), so any prior weight
+                        # penalizes the right answer. Keep it off for the lattice.
+                        'candidate_score.weight_prior': 0.0,
+                        # Best-vs-second-best rejection keeps repeated-structure
+                        # near-ties in LOST instead of publishing a coin flip.
+                        'ambiguity.min_score_margin': ambiguity_margin,
+                        'ambiguity.min_separation_xy': 0.5,
+                        'ambiguity.min_separation_yaw': 0.35,
                         'follow_localization_status': True,
                         'auto_multi_guess_on_lost': True,
                         'force_registration_when_lost': True,
@@ -782,24 +929,25 @@ def generate_launch_description() -> LaunchDescription:
                 # odom callbacks lag and flip TRACKING->LOST. ROGMap already has
                 # odom_timeout_sec=5; fusion param name is odom_timeout_s.
                 "odom_timeout_s": 5.0,
-                # Gazebo GICP may publish non-finite raw errors under sim relax;
-                # keep fusion receptive to high-inlier accepted observations.
-                "min_observation_quality": 0.0,
+                # GICP can no longer publish an accepted observation with a
+                # non-finite raw registration error; fusion also rejects one.
+                "min_observation_quality": ParameterValue(
+                    fusion_min_observation_quality, value_type=float
+                ),
                 "max_registration_error": -1.0,
-                # Prior-reloc: allow larger map->odom updates from accepted GICP
-                # observations after /initialpose (still fail-closed on quality).
+                # TRACKING keeps the real-robot 2.0 m / 1.0 rad correction budget.
+                # Only LOST recovery gets the wider 5.0 m / 1.5 rad window.
                 "max_correction_translation": ParameterValue(
                     gicp_max_correction_translation, value_type=float
                 ),
                 "max_correction_yaw": ParameterValue(
                     gicp_max_correction_yaw, value_type=float
                 ),
-                # Gazebo prior-reloc: LOST gate matches the raised sim correction budget.
                 "lost_max_correction_translation": ParameterValue(
-                    gicp_max_correction_translation, value_type=float
+                    gicp_lost_max_correction_translation, value_type=float
                 ),
                 "lost_max_correction_yaw": ParameterValue(
-                    gicp_max_correction_yaw, value_type=float
+                    gicp_lost_max_correction_yaw, value_type=float
                 ),
             },
         ],
@@ -874,11 +1022,10 @@ def generate_launch_description() -> LaunchDescription:
                 # keep static+ROGMap fusion fail-closed on real obstacles only.
                 "require_terrain_inputs": False,
                 "projection_snapshot_timeout_sec": 30.0,  # Gazebo load: avoid ready=0 flaps from 2–4s stale
-                # The shared real-vehicle profile projects at 0.5 Hz for its
-                # measured CPU budget.  Gazebo completes this request in
-                # milliseconds while the goal manager keeps a 1 s immutable
-                # snapshot lease, so this profile must refresh above 1 Hz
-                # rather than weakening that safety lease.
+                # Keep the simulation on the same controlled projection cadence
+                # as the real-vehicle profile.  A slower immutable snapshot
+                # publication gives MINCO enough time to finish and commit
+                # without weakening the exact map-sequence gate.
                 "projection_rate_hz": ParameterValue(
                     projection_rate_hz, value_type=float
                 ),
@@ -1146,6 +1293,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     planning_group = TimerAction(
         period=LaunchConfiguration("rog_map_start_delay_sec"),
+        condition=IfCondition(LaunchConfiguration("launch_planning")),
         actions=[
             rog_map,
             rog_map_adapter,

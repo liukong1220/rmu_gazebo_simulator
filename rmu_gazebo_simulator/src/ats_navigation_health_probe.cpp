@@ -120,8 +120,15 @@ private:
     const auto map_ready_age = ageSeconds(map_ready_received_, now);
     const auto map_status_age = ageSeconds(map_status_received_, now);
     const auto grid_age = ageSeconds(planning_grid_received_, now);
-    return localization_->state ==
-             ats_navigation_interfaces::msg::LocalizationStatus::STATE_TRACKING &&
+    using LS = ats_navigation_interfaces::msg::LocalizationStatus;
+    // Align with adapter/goal_manager/MPC planning-healthy set. First GICP
+    // accept after LOST enters CONFIRMED (fusion requires_hold) before TRACKING;
+    // TRACKING-only rejected a valid cold-start lease (domain192 follow-on).
+    const bool localization_healthy =
+      localization_->state == LS::STATE_TRACKING ||
+      localization_->state == LS::STATE_CONFIRMED ||
+      localization_->state == LS::STATE_DEGRADED;
+    return localization_healthy &&
            localization_age >= 0.0 && localization_age <= localization_timeout_sec_ &&
            *map_ready_ && map_ready_age >= 0.0 && map_ready_age <= map_timeout_sec_ &&
            map_status_->ready && map_status_age >= 0.0 && map_status_age <= map_timeout_sec_ &&

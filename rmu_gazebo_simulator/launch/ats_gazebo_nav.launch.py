@@ -52,7 +52,7 @@ Ownership rules enforced here:
   global registration starts from the frozen initial map->odom in GT mode and
   can be corrected by ``small_gicp_relocalization`` observations when enabled.
 * ``relocalization_observation``  single publisher: small_gicp_relocalization
-  (optional; prior-PCD mode). Fusion remains the only map->odom TF owner.
+  (enabled by default; prior-PCD mode). Fusion remains the only map->odom TF owner.
 * ``gimbal_yaw_odom -> front_mid360``  single publisher: the static TF below.
   The real-vehicle bringup publishes it too, but only when
   ``use_sim_time:=false``, so the two never coexist.
@@ -160,16 +160,17 @@ def generate_launch_description() -> LaunchDescription:
             description="Root-owned navigation parameter YAML",
         ),
         DeclareLaunchArgument("use_sim_time", default_value="true"),
+        DeclareLaunchArgument("robot_name", default_value="red_standard_robot1"),
         DeclareLaunchArgument(
             "gazebo_gt_odom_topic",
-            default_value="/red_standard_robot1/chassis_odometry_gt",
-            description="GZ bridged chassis ground-truth odometry topic.",
+            default_value=["/", robot_name, "/gimbal_odometry_gt"],
+            description="Native moving-gimbal GT; chassis odometry is rejected.",
         ),
         DeclareLaunchArgument(
             "use_gazebo_gt_odometry",
             default_value="true",
             description=(
-                "Gazebo-only: relay /<robot>/chassis_odometry_gt onto /odometry "
+                "Gazebo-only: relay /<robot>/gimbal_odometry_gt onto /odometry "
                 "(and odom->gimbal_yaw_odom TF) instead of Point-LIO odometry. "
                 "MuJoCo already uses sim truth; Gazebo Point-LIO diverges under "
                 "red_box motion (d16/d20). Keep false to exercise the LIO chain."
@@ -177,21 +178,23 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             "launch_small_gicp_relocalization",
-            default_value="false",
+            default_value="true",
             description=(
                 "Enable prior-map GICP relocalization (small_gicp_relocalization). "
-                "Requires prior_pcd_file. Fusion keeps map->odom ownership; GICP "
-                "only publishes relocalization_observation. Default false keeps "
-                "the GT mapping-time localization profile unchanged."
+                "Requires a readable world-matched prior_pcd_file. Fusion keeps "
+                "map->odom ownership; GICP only publishes observations."
             ),
         ),
         DeclareLaunchArgument(
             "prior_pcd_file",
-            default_value="",
+            default_value=PathJoinSubstitution(
+                [FindPackageShare("ats_sentry_bringup"), "pcd",
+                 PythonExpression(["'", world, "' + '.pcd'"])]
+            ),
             description=(
-                "Absolute path to the prior map PCD consumed by "
-                "small_gicp_relocalization. Empty disables loading even if "
-                "launch_small_gicp_relocalization:=true."
+                "World-matched map-frame prior PCD. The default selects the "
+                "canonical prior for world; missing files fail startup. "
+                "Custom worlds must supply their own matching prior explicitly."
             ),
         ),
         DeclareLaunchArgument(
@@ -274,21 +277,20 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             "observation_timeout_s",
-            default_value="600.0",
+            default_value="3.0",
             description=(
-                "Fusion observation degraded timeout [s]. Gazebo nav default is "
-                "long to avoid LOST flip under sparse GICP; stress tests may lower it."
+                "Fusion accepted-observation lease before DEGRADED [s]."
             ),
         ),
         DeclareLaunchArgument(
             "observation_lost_timeout_s",
-            default_value="3600.0",
+            default_value="30.0",
             description=(
-                "Fusion observation LOST timeout [s]. Keep long for nominal Gazebo "
-                "nav; LOST async reloc stress should pass a short value explicitly."
+                "Fusion accepted-observation lease before LOST [s]. "
+                "Match MuJoCo: identity/init prior needs longer than one "
+                "multi_guess sweep before LOST opens the full lattice."
             ),
         ),
-        DeclareLaunchArgument("robot_name", default_value="red_standard_robot1"),
         DeclareLaunchArgument(
             "initial_map_to_odom_x",
             default_value="1.17",
@@ -688,7 +690,7 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    # GT mode pose owner: chassis GT -> /odometry + odom->gimbal_yaw_odom.
+    # GT mode pose owner: native gimbal link GT -> /odometry + odom->gimbal_yaw_odom.
     # LIO mode keeps sensor_scan_generation above as the sole pose owner.
     gazebo_gt_odometry_relay = Node(
         package="rmu_gazebo_simulator",
@@ -700,6 +702,9 @@ def generate_launch_description() -> LaunchDescription:
             {
                 "use_sim_time": use_sim_time,
                 "gt_odom_topic": ParameterValue(LaunchConfiguration("gazebo_gt_odom_topic"), value_type=str),
+                "gt_child_frame": ParameterValue(
+                    [robot_name, "/gimbal_yaw_odom"], value_type=str
+                ),
                 "output_odom_topic": "/odometry",
                 "odom_frame": "odom",
                 "base_frame": "gimbal_yaw_odom",
@@ -727,15 +732,23 @@ def generate_launch_description() -> LaunchDescription:
                 "input_cloud_topic": ["/", robot_name, "/livox/lidar"],
                 "output_cloud_topic": "/registered_scan",
                 "target_frame": "odom",
+                "input_reliability": ParameterValue(
+                    PythonExpression([
+                        "'best_effort' if '",
+                        LaunchConfiguration("use_direct_gazebo_lidar_bridge"),
+                        "'.lower() in ('true', '1') else '",
+                        LaunchConfiguration("lidar_bridge_publisher_reliability"),
+                        "'",
+                    ]),
+                    value_type=str,
+                ),
                 "tf_timeout_sec": 0.10,
                 "max_extrapolation_sec": 0.25,
             }
         ],
     )
 
-    # Prior-map reloc (optional): GICP owns observations only; fusion owns TF.
-    # Mapping-time GT profile leaves this off. Reloc tests pass
-    # launch_small_gicp_relocalization:=true + prior_pcd_file:=<abs.pcd>.
+    # GICP owns accepted observations only; fusion remains the sole map->odom owner.
     # init_pose MUST match fusion's initial map->odom seed; Identity makes
     # align() diverge against a map-frame prior (converged=false error=inf).
     def _configure_small_gicp(context, *args, **kwargs):
@@ -773,12 +786,8 @@ def generate_launch_description() -> LaunchDescription:
                         'publish_tf': False,
                         'map_frame': 'map',
                         'odom_frame': 'odom',
-                        # Gazebo prior PCD is already in map. loadGlobalMap() applies
-                        # base->lidar when both frames are set (Point-LIO lidar_odom maps).
-                        # Leave empty to skip that warp; robot_base_frame still used for TF.
-                        'base_frame': '',
+                        # Input clouds are odom-coordinate; prior points are map-coordinate.
                         'robot_base_frame': 'gimbal_yaw_odom',
-                        'lidar_frame': '',
                         # Dense prior PCD (rmuc_2025.pcd) vs Gazebo mid360: slightly
                         # coarser leaves + looser match distance widen the basin after
                         # /initialpose, then refine inside the force window.
@@ -791,19 +800,31 @@ def generate_launch_description() -> LaunchDescription:
                         # require consecutive scans that agree AND whose implied
                         # relative motion matches odometry.
                         'confirmation_count': confirmation_count,
-                        'confirmation_translation_tolerance': 0.15,
-                        'confirmation_yaw_tolerance': 0.10,
+                        'confirmation_timeout_s': float(
+                            context.launch_configurations.get('observation_lost_timeout_s', '30.0')),
+                        'confirmation_translation_tolerance': 0.35,
+                        'confirmation_yaw_tolerance': 0.20,
                         'confirmation_min_interval_s': 0.05,
                         'confirmation_motion_translation_tolerance': 0.25,
                         'confirmation_motion_yaw_tolerance': 0.15,
-                        'registration_interval_s': 0.25,
+                        # Keep observations refreshing the fusion lease (domain198:
+                        # 0.40/0.25 starved accepts → observation silence → LOST).
+                        # Epoch damping (0.50 m / 0.35 rad) still prevents DualMap wipe.
+                        'registration_interval_s': 0.35,
+                        'min_registration_translation_delta': 0.12,
+                        'min_registration_yaw_delta': 0.12,
+
                         'initial_pose_force_registration_window_s': 5.0,
                         'max_registration_error': -1.0,
-                        # relax_convergence_for_sim now only applies inside the
-                        # /initialpose force window and only waives the optimizer
-                        # converged flag; finite error / overlap / information /
-                        # finite transform gates are never bypassed.
-                        'relax_convergence_for_sim': True,
+
+                        # relax_convergence_for_sim waives only the optimizer
+                        # converged flag inside the /initialpose force window AND
+                        # through cold-start until first accept (gazebo194/195).
+                        # Finite error / overlap / information / transform stay.
+                        # ParameterValue forces bool override over params_file.
+                        'relax_convergence_for_sim': ParameterValue(True, value_type=bool),
+                        'fine_max_iterations': 32,
+
                         # Coarse-to-fine windowed alignment. Keep overlap gate off
                         # in Gazebo thin-wall priors; real-robot params keep 0.30.
                         'registration_mode': 'initial_guess',
@@ -812,14 +833,15 @@ def generate_launch_description() -> LaunchDescription:
                         'fine_alignment.coarse_first_window_only': True,
                         'fine_alignment.max_correspondence_distance': 0.60,
                         'min_overlap_ratio': min_overlap_ratio,
-                        # Fine-stage information gate. Pooled over two adversarial
-                        # dev3_px_auto runs (191 wrong / 4 correct fine candidates):
-                        # correct min eigenvalue 1.53e4, every wrong one <= 8.4e3.
-                        # A partial wall match leaves the weakest DOF unconstrained,
-                        # which is exactly what this eigenvalue measures. It is only
-                        # comparable at fixed source density, so it is an ACCEPT gate;
-                        # the sparse screen stage never applies it.
-                        'min_information_eigenvalue': 1.0e4,
+                        # Fine-stage information gate. Absolute eigenvalue thresholds
+                        # are density-coupled (commented 1.0e4 came from denser
+                        # adversarial Mid360 sweeps). domain192 with current leaf /
+                        # downsample never produced gated>=1: every fine candidate
+                        # failed "minimum information eigenvalue below threshold"
+                        # despite converged + hundreds of inliers + overlap~0.45.
+                        # Keep the gate off (node_params default) and rely on
+                        # overlap 0.20 + confirmation + ambiguity + cold-start prior.
+                        'min_information_eigenvalue': 0.0,
                         # Candidate scheduling: layered interleaved order, a per-scan
                         # time budget, and a cursor that resumes the sweep next scan.
                         # The coarse pass only SCREENS on a sparse cloud (cost is
@@ -829,7 +851,7 @@ def generate_launch_description() -> LaunchDescription:
                         'multi_guess.time_budget_s': 1.5,
                         'multi_guess.max_candidates_per_scan': 48,
                         'multi_guess.screen_leaf_size': 0.70,
-                        'multi_guess.max_fine_per_scan': 2,
+                        'multi_guess.max_fine_per_scan': 4,
                         'multi_guess.candidate_log_path': candidate_log_path,
                         'multi_guess.log_candidates': False,
                         # Measured on the adversarial dev3_px_auto sample: registration
@@ -858,6 +880,11 @@ def generate_launch_description() -> LaunchDescription:
                         # Gazebo fullfield prior: height filter can starve Mid360
                         # returns; keep off unless prior/sensor z are aligned.
                         'height_filter.enable': False,
+                        # Reject cold-start hypotheses that leave the init_pose
+                        # basin before first STATUS_ACCEPTED (MuJoCo straight189).
+                        'cold_start_prior_max_xy_m': 1.0,
+                        'cold_start_prior_max_yaw_rad': 0.60,
+
 
                         'init_pose': [ix, iy, iz, ir, ip, iyaw],
                     },
@@ -913,10 +940,8 @@ def generate_launch_description() -> LaunchDescription:
                 "initial_map_to_odom_yaw": ParameterValue(
                     initial_map_to_odom_yaw, value_type=float
                 ),
-                # Domain 36: with static PGM registration, GICP observations are
-                # sparse/noisy; default 3s/10s degraded/lost flipped status to
-                # LOST and starved ROG adapter (not tracking x3355). Keep
-                # initial map->odom TRACKING unless odometry itself goes stale.
+                # Missing accepted observations expire the localization lease;
+                # the initial map->odom seed is not an ongoing observation.
                 "observation_topic": "/relocalization_observation",
                 "observation_timeout_s": ParameterValue(
                     observation_timeout_s, value_type=float
@@ -929,6 +954,15 @@ def generate_launch_description() -> LaunchDescription:
                 # odom callbacks lag and flip TRACKING->LOST. ROGMap already has
                 # odom_timeout_sec=5; fusion param name is odom_timeout_s.
                 "odom_timeout_s": 5.0,
+                # Gazebo GT odom floods the default 2000-sample history (domain197
+                # count_cap_drops hit 25k+). Keep a longer window for interpolation.
+                "max_odom_history_samples": 20000,
+                # domain197: every GICP re-accept (>0.05 m from identity/current)
+                # advanced fusion epoch and wiped adapter ready before DualMap auth.
+                # Tracking updates inside this band refresh TF without a new epoch.
+                "epoch_translation_threshold": 0.50,
+                "epoch_yaw_threshold": 0.35,
+
                 # GICP can no longer publish an accepted observation with a
                 # non-finite raw registration error; fusion also rejects one.
                 "min_observation_quality": ParameterValue(
@@ -1016,7 +1050,7 @@ def generate_launch_description() -> LaunchDescription:
             {
                 "use_sim_time": use_sim_time,
                 "planning_grid_owner": planning_grid_owner,
-                "require_localization_status": False,  # Gazebo: GICP flicker must not starve planning
+                "require_localization_status": True,
                 # GT / headless Gazebo: allow planning when terrain_analysis is
                 # off or briefly unsynced; unknown terrain/slope placeholders
                 # keep static+ROGMap fusion fail-closed on real obstacles only.
@@ -1046,7 +1080,7 @@ def generate_launch_description() -> LaunchDescription:
             params_file,
             {
                 "use_sim_time": use_sim_time,
-                "require_localization_status": False,  # Gazebo: GICP flicker must not starve planning
+                "require_localization_status": True,
                 "map_ready_timeout_sec": 15.0,  # tolerate brief projection stale flaps
                 # There is no serial gimbal-status producer in Gazebo.  The
                 # chassis adapter uses the simulated joint state for the yaw
@@ -1182,7 +1216,7 @@ def generate_launch_description() -> LaunchDescription:
             {
                 "use_sim_time": use_sim_time,
                 "command_topic": "/cmd_vel/autonomy_raw",
-                "require_localization_status": False,  # Gazebo: GICP flicker must not starve planning
+                "require_localization_status": True,
                 "require_gimbal_status": ParameterValue(
                     require_gimbal_status, value_type=bool
                 ),
@@ -1210,6 +1244,8 @@ def generate_launch_description() -> LaunchDescription:
                 "manual_cmd_vel_topic": "/cmd_vel",
                 "autonomy_cmd_vel_topic": "/cmd_vel/autonomy_raw",
                 "selected_cmd_vel_topic": "/cmd_vel/selected",
+                "planner_status_topic": "/minco/planning_status",
+                "map_ready_topic": "/rog_map_adapter/ready",
                 "require_serial_link": False,
             },
         ],
@@ -1312,6 +1348,19 @@ def generate_launch_description() -> LaunchDescription:
     for declaration in declarations:
         ld.add_action(declaration)
     for action in (
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution([
+                    FindPackageShare("ats_nav_bringup"), "launch",
+                    "prior_pcd_preflight.launch.py",
+                ])
+            ),
+            launch_arguments={
+                "world": world,
+                "prior_pcd_file": prior_pcd_file,
+                "launch_small_gicp_relocalization": launch_small_gicp_relocalization,
+            }.items(),
+        ),
         gazebo,
         spawn_robots,
         lidar_static_tf,

@@ -17,6 +17,14 @@
   gz_type_name: "ignition.msgs.Odometry"
   direction: "GZ_TO_ROS"
 
+# Native moving-gimbal truth for the explicit GT-assisted localization profile.
+# Separate from chassis evaluation truth; pose and twist describe the actual link.
+- ros_topic_name: "/<robot_name>/gimbal_odometry_gt"
+  gz_topic_name: "/<robot_name>/gimbal_odometry_gt"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "ignition.msgs.Odometry"
+  direction: "GZ_TO_ROS"
+
 # JointStatePublisher publish
 - ros_topic_name: "/<robot_name>/joint_states"
   gz_topic_name: "/world/default/model/<robot_name>/joint_state"

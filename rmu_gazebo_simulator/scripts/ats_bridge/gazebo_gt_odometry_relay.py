@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Relay Gazebo chassis ground-truth odometry into the ATS /odometry contract.
+"""Normalize native Gazebo gimbal ground truth into the ATS /odometry contract.
 
-Gazebo SwerveDrive4WS publishes world-frame chassis pose on
-/<robot>/odometry (bridged as /<robot>/chassis_odometry_gt). Point-LIO
-odometry diverges under red_box motion; MuJoCo already feeds sim truth.
-This relay converts world pose into the odom frame expected by
-localization_fusion:
+The drivetrain plugin publishes the actual gimbal_yaw_odom link world pose
+and child-frame twist at the simulation stamp on /<robot>/gimbal_odometry_gt.
+This relay only changes the world origin, never substitutes chassis pose for
+the moving gimbal link. localization_fusion receives:
 
   odom = R(-spawn_yaw) * (world - spawn_xy)
 
@@ -21,23 +20,19 @@ import math
 import rclpy
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from tf2_ros import TransformBroadcaster
 
 
-def _yaw_from_quat(z: float, w: float) -> float:
-    return math.atan2(2.0 * w * z, 1.0 - 2.0 * z * z)
-
-
-def _quat_from_yaw(yaw: float) -> tuple[float, float, float, float]:
-    return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
 
 
 class GazeboGtOdometryRelay(Node):
     def __init__(self) -> None:
         super().__init__("gazebo_gt_odometry_relay")
-        self.declare_parameter("gt_odom_topic", "/red_standard_robot1/chassis_odometry_gt")
+        self.declare_parameter("gt_odom_topic", "/red_standard_robot1/gimbal_odometry_gt")
+        self.declare_parameter("gt_child_frame", "red_standard_robot1/gimbal_yaw_odom")
         self.declare_parameter("output_odom_topic", "/odometry")
         self.declare_parameter("odom_frame", "odom")
         self.declare_parameter("base_frame", "gimbal_yaw_odom")
@@ -48,6 +43,7 @@ class GazeboGtOdometryRelay(Node):
         self.declare_parameter("publish_tf", True)
 
         self.gt_topic = str(self.get_parameter("gt_odom_topic").value)
+        self.gt_child_frame = str(self.get_parameter("gt_child_frame").value)
         self.out_topic = str(self.get_parameter("output_odom_topic").value)
         self.odom_frame = str(self.get_parameter("odom_frame").value)
         self.base_frame = str(self.get_parameter("base_frame").value)
@@ -79,10 +75,16 @@ class GazeboGtOdometryRelay(Node):
         )
 
     def _on_gt(self, msg: Odometry) -> None:
+        if msg.header.frame_id != "world" or msg.child_frame_id != self.gt_child_frame:
+            self.get_logger().error(
+                "Rejecting GT frames %s->%s; expected world->%s (no chassis fallback)"
+                % (msg.header.frame_id, msg.child_frame_id, self.gt_child_frame),
+                throttle_duration_sec=5.0,
+            )
+            return
         wx = msg.pose.pose.position.x
         wy = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
-        wyaw = _yaw_from_quat(q.z, q.w)
 
         dx = wx - self.spawn_x
         dy = wy - self.spawn_y
@@ -90,8 +92,10 @@ class GazeboGtOdometryRelay(Node):
         s = math.sin(-self.spawn_yaw)
         ox = c * dx - s * dy
         oy = s * dx + c * dy
-        oyaw = wyaw - self.spawn_yaw
-        zq = _quat_from_yaw(oyaw)
+        # Left-multiply the complete native quaternion by Rz(-spawn_yaw).
+        # Roll/pitch and the gimbal joint's physical yaw remain observable.
+        sz = math.sin(-0.5 * self.spawn_yaw)
+        cw = math.cos(-0.5 * self.spawn_yaw)
 
         out = Odometry()
         out.header.stamp = msg.header.stamp
@@ -100,10 +104,11 @@ class GazeboGtOdometryRelay(Node):
         out.pose.pose.position.x = ox
         out.pose.pose.position.y = oy
         out.pose.pose.position.z = msg.pose.pose.position.z
-        out.pose.pose.orientation.x = zq[0]
-        out.pose.pose.orientation.y = zq[1]
-        out.pose.pose.orientation.z = zq[2]
-        out.pose.pose.orientation.w = zq[3]
+        out.pose.pose.orientation.x = cw * q.x - sz * q.y
+        out.pose.pose.orientation.y = cw * q.y + sz * q.x
+        out.pose.pose.orientation.z = cw * q.z + sz * q.w
+        out.pose.pose.orientation.w = cw * q.w - sz * q.z
+        # The physical child is unchanged; native twist is already child-framed.
         out.twist = msg.twist
         self.pub.publish(out)
 
@@ -124,9 +129,11 @@ def main() -> None:
     node = GazeboGtOdometryRelay()
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

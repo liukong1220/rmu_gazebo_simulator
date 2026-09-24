@@ -136,6 +136,10 @@ if(BUILD_TESTING)
     NAME test_chassis_command_logic
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chassis_command_logic.py
   )
+  add_test(
+    NAME test_gt_relay_contract
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gt_relay_contract.py
+  )
 
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()

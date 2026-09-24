@@ -1158,6 +1158,11 @@ def generate_launch_description() -> LaunchDescription:
             params_file,
             {
                 "use_sim_time": use_sim_time,
+                # RMUC diagnostics are explicit here because the shared root
+                # profile leaves optional guide publishers disabled.
+                "preprocessed_guide_topic": "/minco/preprocessed_guide",
+                "esdf_refined_guide_topic": "/minco/esdf_refined_guide",
+                "debug_marker_topic": "/minco/debug_markers",
                 # Domain 219 west corridor: ego_clear=0 after east-facing latch;
                 # production keeps escape fail-closed, but Gazebo Point-LIO grid
                 # quantization routinely pins the footprint against corridor

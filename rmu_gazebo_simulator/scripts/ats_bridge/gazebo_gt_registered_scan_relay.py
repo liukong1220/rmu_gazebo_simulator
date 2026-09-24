@@ -11,7 +11,7 @@ This node mirrors the MuJoCo / navi_minco_bit contract:
       --TF(odom chain)--> /registered_scan (odom)
 
 Do NOT subscribe /livox/lidar: that topic is gz_livox_bridge CustomMsg for
-Point-LIO. The PointCloud2 source is ros_gz on /<robot>/livox/lidar (RELIABLE).
+Point-LIO. The PointCloud2 source is the generic or direct Gazebo bridge.
 
 Transform path: manual XYZ only (numpy). Gazebo/ros_gz PointCloud2 fields often
 trip tf2_sensor_msgs.do_transform_cloud (PointFields/dtype assert). navi_minco_bit
@@ -19,7 +19,7 @@ and local loam/sensor_scan paths use PCL field-aware transforms; for Python we
 rebuild a minimal xyz cloud in the target frame.
 
 Ownership / QoS (aligned with loam_interface + navi_minco_bit cloud_registered):
-  - Subscribe /<robot>/livox/lidar RELIABLE (ros_gz default).
+  - Subscribe with input_reliability (RELIABLE default; direct bridge BEST_EFFORT).
   - Publish /registered_scan RELIABLE keep_last(5).
 
 Only run when use_gazebo_gt_odometry:=true and Point-LIO/loam_interface are off.
@@ -32,6 +32,7 @@ import struct
 import numpy as np
 import rclpy
 from rclpy.duration import Duration
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
@@ -140,6 +141,7 @@ class GazeboGtRegisteredScanRelay(Node):
         )
         self.declare_parameter("output_cloud_topic", "/registered_scan")
         self.declare_parameter("target_frame", "odom")
+        self.declare_parameter("input_reliability", "reliable")
         self.declare_parameter("tf_timeout_sec", 0.10)
         self.declare_parameter("max_extrapolation_sec", 0.25)
         self.declare_parameter("stats_period_sec", 5.0)
@@ -158,10 +160,15 @@ class GazeboGtRegisteredScanRelay(Node):
         self.min_range_m = max(0.0, float(self.get_parameter("min_range_m").value))
         stats_period = float(self.get_parameter("stats_period_sec").value)
 
+        reliability = str(self.get_parameter("input_reliability").value)
+        if reliability not in ("reliable", "best_effort"):
+            raise ValueError("input_reliability must be reliable or best_effort")
+
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
             depth=5,
-            reliability=ReliabilityPolicy.RELIABLE,
+            reliability=(ReliabilityPolicy.RELIABLE if reliability == "reliable"
+                         else ReliabilityPolicy.BEST_EFFORT),
             durability=DurabilityPolicy.VOLATILE,
         )
         registered_qos = QoSProfile(
@@ -268,9 +275,11 @@ def main() -> None:
     node = GazeboGtRegisteredScanRelay()
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

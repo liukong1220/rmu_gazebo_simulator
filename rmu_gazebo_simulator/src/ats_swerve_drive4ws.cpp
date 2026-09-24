@@ -109,10 +109,46 @@ public:
     odometry_publisher.Publish(message);
   }
 
+  void PublishGimbalGroundTruth(
+    const UpdateInfo & info, const EntityComponentManager & ecm)
+  {
+    if (gimbal_link == kNullEntity) {
+      return;
+    }
+    const auto * pose = ecm.Component<components::WorldPose>(gimbal_link);
+    const auto * linear = ecm.Component<components::WorldLinearVelocity>(gimbal_link);
+    const auto * angular = ecm.Component<components::WorldAngularVelocity>(gimbal_link);
+    if (pose == nullptr || linear == nullptr || angular == nullptr) {
+      return;
+    }
+
+    // nav_msgs/Odometry twist is expressed in child_frame_id, not world.
+    // Native link state includes the moving joint's offset and angular rate.
+    const auto & link_pose = pose->Data();
+    const auto child_linear = link_pose.Rot().RotateVectorReverse(linear->Data());
+    const auto child_angular = link_pose.Rot().RotateVectorReverse(angular->Data());
+    msgs::Odometry message;
+    msgs::Set(message.mutable_pose()->mutable_position(), link_pose.Pos());
+    msgs::Set(message.mutable_pose()->mutable_orientation(), link_pose.Rot());
+    msgs::Set(message.mutable_twist()->mutable_linear(), child_linear);
+    msgs::Set(message.mutable_twist()->mutable_angular(), child_angular);
+    message.mutable_header()->mutable_stamp()->CopyFrom(convert<msgs::Time>(info.simTime));
+    auto frame = message.mutable_header()->add_data();
+    frame->set_key("frame_id");
+    frame->add_value("world");
+    auto child = message.mutable_header()->add_data();
+    child->set_key("child_frame_id");
+    child->add_value(gimbal_child_frame_id);
+    gimbal_odometry_publisher.Publish(message);
+  }
+
   transport::Node transport_node;
   Model model{kNullEntity};
   std::string chassis_link_name;
   Entity chassis_link{kNullEntity};
+  Entity gimbal_link{kNullEntity};
+  std::string gimbal_child_frame_id;
+  transport::Node::Publisher gimbal_odometry_publisher;
   std::vector<SwerveModule> modules;
   double wheel_radius{0.0425};
   double max_wheel_speed{39.26991};
@@ -209,6 +245,19 @@ public:
     data_->odom_frame_id = model_name + "/odom";
     data_->odom_child_frame_id = model_name + "/" +
       ignition::common::replaceAll(data_->chassis_link_name, "::", "/");
+    const auto gimbal_link_name = sdf->Get<std::string>(
+      "gt_gimbal_link", "gimbal_yaw_odom").first;
+    data_->gimbal_link = data_->model.LinkByName(ecm, gimbal_link_name);
+    if (data_->gimbal_link == kNullEntity) {
+      ignerr << "Ground-truth gimbal link [" << gimbal_link_name
+             << "] missing; gimbal odometry is unavailable (no chassis fallback)."
+             << std::endl;
+    } else {
+      data_->gimbal_child_frame_id = model_name + "/" +
+        ignition::common::replaceAll(gimbal_link_name, "::", "/");
+      data_->gimbal_odometry_publisher = data_->transport_node.Advertise<msgs::Odometry>(
+        model_name + "/gimbal_odometry_gt");
+    }
   }
 
   void PreUpdate(const UpdateInfo & info, EntityComponentManager & ecm) override
@@ -226,6 +275,17 @@ public:
     }
     if (!ecm.Component<components::AngularVelocity>(data_->chassis_link)) {
       ecm.CreateComponent(data_->chassis_link, components::AngularVelocity());
+    }
+    if (data_->gimbal_link != kNullEntity) {
+      if (!ecm.Component<components::WorldPose>(data_->gimbal_link)) {
+        ecm.CreateComponent(data_->gimbal_link, components::WorldPose());
+      }
+      if (!ecm.Component<components::WorldLinearVelocity>(data_->gimbal_link)) {
+        ecm.CreateComponent(data_->gimbal_link, components::WorldLinearVelocity());
+      }
+      if (!ecm.Component<components::WorldAngularVelocity>(data_->gimbal_link)) {
+        ecm.CreateComponent(data_->gimbal_link, components::WorldAngularVelocity());
+      }
     }
     for (const auto & module : data_->modules) {
       if (!ecm.Component<components::JointPosition>(module.steer_joint)) {
@@ -299,6 +359,7 @@ public:
   {
     if (!info.paused && !data_->modules.empty()) {
       data_->PublishGroundTruth(info, ecm);
+      data_->PublishGimbalGroundTruth(info, ecm);
     }
   }
 

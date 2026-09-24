@@ -23,6 +23,7 @@
 
 	<!-- ATS bridge nodes under scripts/ats_bridge. -->
 	<exec_depend>rclpy</exec_depend>
+	<exec_depend>ats_nav_bringup</exec_depend>
 	<exec_depend>std_msgs</exec_depend>
 	<depend>geometry_msgs</depend>
 	<depend>nav_msgs</depend>

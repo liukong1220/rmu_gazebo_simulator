@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2021 Zhenpeng Ge
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +18,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import TransformStamped
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rmoss_interfaces.msg import RefereeCmd, RfidStatusArray, RobotStatus
 from rmoss_interfaces.srv import ExchangeAmmon
@@ -360,10 +362,14 @@ def main(args=None):
     rclpy.init(args=args)
     node = Node("referee_system")
     referee_system = SimpleRefereeSystem(node)
-    rclpy.spin(node)
-    referee_system
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        referee_system
+        node.destroy_node()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

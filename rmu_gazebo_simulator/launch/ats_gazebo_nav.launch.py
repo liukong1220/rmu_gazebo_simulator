@@ -466,13 +466,14 @@ def generate_launch_description() -> LaunchDescription:
         # Livox mounting pose on the big-yaw frame. Must stay numerically equal
         # to the xmacro block in ats_sentry_robot.sdf.xmacro, otherwise the
         # point cloud and the TF tree disagree.
-        DeclareLaunchArgument("lidar_static_tf_x", default_value="-0.2"),
-        DeclareLaunchArgument("lidar_static_tf_y", default_value="0.0"),
-        DeclareLaunchArgument("lidar_static_tf_z", default_value="0.0"),
-        DeclareLaunchArgument("lidar_static_tf_roll", default_value="0.0"),
+        # Current xmacro mount: "-0.1 0.245 0.325 ${75*pi/180} 0 -${161*pi/180}".
+        DeclareLaunchArgument("lidar_static_tf_x", default_value="-0.1"),
+        DeclareLaunchArgument("lidar_static_tf_y", default_value="0.245"),
+        DeclareLaunchArgument("lidar_static_tf_z", default_value="0.325"),
+        DeclareLaunchArgument("lidar_static_tf_roll", default_value="1.3089969389957472"),
         DeclareLaunchArgument("lidar_static_tf_pitch", default_value="0.0"),
         DeclareLaunchArgument(
-            "lidar_static_tf_yaw", default_value="-1.0646508437165408"
+            "lidar_static_tf_yaw", default_value="-2.8099800957108707"
         ),
     ]
 
@@ -712,6 +713,26 @@ def generate_launch_description() -> LaunchDescription:
                 "spawn_world_y": 9.00,
                 "spawn_world_yaw": 0.0,
                 "publish_tf": True,
+            }
+        ],
+    )
+
+    # Robot model on the global tree: forwards the namespaced
+    # robot_state_publisher edges and hangs base_footprint (ground) under
+    # gimbal_yaw_odom, so RViz RobotModel and base_footprint consumers work.
+    gazebo_robot_tf_relay = Node(
+        package="rmu_gazebo_simulator",
+        executable="gazebo_robot_tf_relay.py",
+        name="gazebo_robot_tf_relay",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": use_sim_time,
+                "input_tf_topic": ["/", robot_name, "/tf"],
+                "input_tf_static_topic": ["/", robot_name, "/tf_static"],
+                "robot_base_frame": "gimbal_yaw_odom",
+                "base_footprint_frame": "base_footprint",
+                "excluded_child_frames": ["front_mid360"],
             }
         ],
     )
@@ -1333,6 +1354,7 @@ def generate_launch_description() -> LaunchDescription:
             loam_interface,
             sensor_scan,
             gazebo_gt_odometry_relay,
+            gazebo_robot_tf_relay,
             gazebo_gt_registered_scan_relay,
             small_gicp_relocalization,
             localization_fusion,

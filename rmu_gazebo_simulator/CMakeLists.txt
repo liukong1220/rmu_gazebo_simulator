@@ -93,6 +93,7 @@ install(PROGRAMS
   scripts/ats_bridge/executed_path_observer.py
   scripts/ats_bridge/gazebo_gt_odometry_relay.py
   scripts/ats_bridge/gazebo_gt_registered_scan_relay.py
+  scripts/ats_bridge/gazebo_robot_tf_relay.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -191,14 +191,14 @@ class GazeboGtRegisteredScanRelay(Node):
         if stats_period > 0.0:
             self.create_timer(stats_period, self._on_stats)
         self.get_logger().info(
-            "GT registered_scan relay '%s' -> '%s' (frame=%s, pub=RELIABLE/5, "
-            "xyz-manual, min_range=%.3f m)"
+            "【Gazebo真值点云】registered_scan 转发 '%s' -> '%s'（坐标系=%s，发布=RELIABLE/5，"
+            "手动 xyz 转换，最小距离=%.3f m)"
             % (self.input_topic, self.output_topic, self.target_frame, self.min_range_m)
         )
 
     def _on_stats(self) -> None:
         self.get_logger().info(
-            "registered_scan stats ok=%u drop=%u (tf=%u stale=%u xform=%u)"
+            "【Gazebo真值点云统计】成功=%u 丢弃=%u（TF=%u 过期=%u 转换=%u）"
             % (
                 self._ok,
                 self._drop,
@@ -238,7 +238,7 @@ class GazeboGtRegisteredScanRelay(Node):
             self._drop_tf += 1
             if self._drop_tf % 50 == 1:
                 self.get_logger().warn(
-                    "TF %s<-%s failed (%s); dropped=%u ok=%u"
+                    "【Gazebo真值点云丢弃】TF %s<-%s 失败（%s）；丢弃=%u 成功=%u"
                     % (self.target_frame, source, exc, self._drop, self._ok)
                 )
             return
@@ -260,7 +260,7 @@ class GazeboGtRegisteredScanRelay(Node):
             self._drop_xform += 1
             if self._drop_xform % 20 == 1:
                 self.get_logger().warn(
-                    "xyz transform failed (%s); dropped=%u ok=%u"
+                    "【Gazebo真值点云丢弃】xyz 转换失败（%s）；丢弃=%u 成功=%u"
                     % (exc, self._drop, self._ok)
                 )
             return

@@ -62,7 +62,7 @@ class GazeboGtOdometryRelay(Node):
         self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
         self.create_subscription(Odometry, self.gt_topic, self._on_gt, sensor_qos)
         self.get_logger().info(
-            "Relaying GT '%s' -> '%s' frames %s->%s spawn_world=(%.3f,%.3f,%.3f)"
+            "【Gazebo真值里程计】转发 GT '%s' -> '%s' 坐标系 %s->%s 出生点=(%.3f,%.3f,%.3f)"
             % (
                 self.gt_topic,
                 self.out_topic,
@@ -77,7 +77,7 @@ class GazeboGtOdometryRelay(Node):
     def _on_gt(self, msg: Odometry) -> None:
         if msg.header.frame_id != "world" or msg.child_frame_id != self.gt_child_frame:
             self.get_logger().error(
-                "Rejecting GT frames %s->%s; expected world->%s (no chassis fallback)"
+                "【Gazebo真值里程计拒绝】收到坐标系 %s->%s，期望 world->%s（禁止回退到底盘）"
                 % (msg.header.frame_id, msg.child_frame_id, self.gt_child_frame),
                 throttle_duration_sec=5.0,
             )

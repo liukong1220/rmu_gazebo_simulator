@@ -126,7 +126,7 @@ class ExecutedPathObserver(Node):
         self.create_timer(1.0 / rate, self._publish)
 
         self.get_logger().info(
-            "executed_path_observer: '%s' -> '%s'"
+            "【执行轨迹观察】里程计 '%s' -> '%s'"
             % (
                 self.get_parameter("odom_topic").value,
                 self.get_parameter("output_topic").value,

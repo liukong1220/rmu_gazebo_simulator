@@ -163,7 +163,7 @@ class GazeboRobotTfRelay(Node):
             edge = self.static_edges.get(frame)
             if edge is None:
                 self.get_logger().warn(
-                    "Waiting for static edge to %s before publishing %s -> %s"
+                    "【Gazebo TF等待】等待到 %s 的静态边，再发布 %s -> %s"
                     % (frame, self.robot_base_frame, self.footprint_frame),
                     throttle_duration_sec=5.0,
                 )

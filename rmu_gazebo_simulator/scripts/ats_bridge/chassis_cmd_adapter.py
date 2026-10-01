@@ -142,7 +142,7 @@ class ChassisCmdAdapter(Node):
         self.create_timer(1.0 / rate, self._on_timer)
 
         self.get_logger().info(
-            "gz_chassis_cmd_adapter: '%s' -> '%s' + '%s'"
+            "【Gazebo底盘接口】输入 '%s' -> '%s' + '%s'"
             % (
                 self.get_parameter("input_topic").value,
                 self.get_parameter("motion_control_topic").value,
@@ -217,7 +217,7 @@ class ChassisCmdAdapter(Node):
         if output.big_yaw_missing and self.require_big_yaw:
             if abs(vx) > 1e-9 or abs(vy) > 1e-9 or abs(wz) > 1e-9:
                 self.get_logger().warn(
-                    "Big-yaw feedback unavailable; publishing zero chassis velocity.",
+                    "【Gazebo底盘安全】大 yaw 反馈不可用，发布零底盘速度。",
                     throttle_duration_sec=2.0,
                 )
 

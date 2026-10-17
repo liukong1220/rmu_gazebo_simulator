@@ -153,7 +153,47 @@ python3 src/rmu_gazebo_simulator/rmu_gazebo_simulator/scripts/referee_web/main.p
 
 `bringup_sim.launch.py` 读取 [gz_world.yaml](./rmu_gazebo_simulator/config/gz_world.yaml) 中的 `world`（默认 `rmuc_2025`）。导航回归也可使用 `rmuc_2027`，其 world、模型和顶板资源由本包提供。出生位姿取自同一文件 `robots.<world>` 条目。
 
-`ats_gazebo_nav.launch.py` 不读取该文件中的 `world`，而是使用 launch 参数 `world`；2027 回归推荐直接使用 `rmuc_2027_gazebo.launch.py`。
+`ats_gazebo_nav.launch.py` 不读取该文件中的 `world`，而是使用 launch 参数 `world`。ATS 2027 导航测试建议直接使用下面的 `ats_gazebo_nav.launch.py world:=rmuc_2027` 命令，确保地图、先验 PCD、出生位姿和 `map->odom` 参数来自同一 world。
+
+日常直接启动（RViz + headless Gazebo）：
+
+```sh
+cd /home/ats/ATS_2026_snetry_test
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch rmu_gazebo_simulator ats_gazebo_nav.launch.py \
+  world:=rmuc_2027 \
+  use_gazebo_gt_odometry:=true \
+  use_rviz:=true
+```
+
+需要 Gazebo GUI 时显式传入：
+
+```sh
+ros2 launch rmu_gazebo_simulator ats_gazebo_nav.launch.py \
+  world:=rmuc_2027 use_gazebo_gt_odometry:=true \
+  headless:=false use_viewer:=true use_rviz:=true
+```
+
+只验证点云和重定位时，使用隔离 domain，并关闭规划链：
+
+```sh
+export DISPLAY=:0
+export EGL_PLATFORM=surfaceless
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+export __NV_PRIME_RENDER_OFFLOAD=1
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
+
+ROS_DOMAIN_ID=232 RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_LOCALHOST_ONLY=1 \
+ros2 launch rmu_gazebo_simulator ats_gazebo_nav.launch.py \
+  world:=rmuc_2027 use_sim_time:=true \
+  headless:=true headless_rendering:=true use_viewer:=false use_rviz:=false \
+  enable_camera_sensors:=false use_gazebo_gt_odometry:=true \
+  launch_planning:=false launch_small_gicp_relocalization:=true \
+  prior_pcd_file:=/home/ats/ATS_2026_snetry_test/src/ats_sentry_bringup/pcd/rmuc_2027.pcd
+```
+
+验证窗口内应能看到 `/registered_scan`、`relocalization_observation=accepted` 和定位状态 `CONFIRMED`。如果 EGL vendor 文件不存在或 GPU 不可用，Gazebo 仍会 fail-closed，不能将节点启动成功当作点云或导航闭环通过。
 
 ### 2.4 RMUC 2027 隧道入口
 
@@ -195,7 +235,7 @@ ats_swerve_mpc -> /cmd_vel/autonomy_raw
 
 TF 相关：
 
-- `gimbal_yaw_odom -> front_mid360` 由 launch 内静态 TF 发布（`lidar_static_tf_*` 参数），默认 `(-0.1, 0.245, 0.325)`，roll 75°、pitch 0、yaw -161°。该值必须与实际 spawn 的 xmacro 中 Mid360 挂载一致，否则点云与 TF 不一致。注意：launch 注释称其对齐 `ats_sentry_robot.sdf.xmacro`，但当前 `ats_robot_description` 中该文件的挂载为 `-0.2 0 0 0 0 -61°`，上述默认值实际与 `simulation_robot` / `simulation_nav_robot.sdf.xmacro` 相同；使用默认 `robot_description_xmacro` 时请先核对并按需覆盖 `lidar_static_tf_*`。
+- `gimbal_yaw_odom -> front_mid360` 由 launch 内静态 TF 发布（`lidar_static_tf_*` 参数），RMUC 2027 默认值为 `(-0.20, 0, 0)`，roll 0°、pitch 0°、yaw -61°。该值必须与实际 spawn 的 xmacro 中 Mid360 挂载一致，否则点云与 TF 不一致；实机 Mid360 外参不能直接复制到 Gazebo。若更换 `robot_description_xmacro`，请先核对并按需覆盖 `lidar_static_tf_*`。
 - `gazebo_robot_tf_relay` 把命名空间下 robot_state_publisher 的 `/<robot>/tf`、`/<robot>/tf_static` 转发到全局 `/tf`、`/tf_static`：丢弃 `chassis -> gimbal_yaw_odom` 边并发布其逆链 `gimbal_yaw_odom -> base_footprint`，避免 `gimbal_yaw_odom` 出现两个父节点；`front_mid360` 已有全局发布者，不转发。
 - RViz 配置 `rviz/ats_gazebo_nav.rviz` 包含 RobotModel（`/red_standard_robot1/robot_description`）。
 

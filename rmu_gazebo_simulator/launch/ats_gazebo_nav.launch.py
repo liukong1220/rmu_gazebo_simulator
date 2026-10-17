@@ -106,6 +106,9 @@ def generate_launch_description() -> LaunchDescription:
     initial_map_to_odom_roll = LaunchConfiguration("initial_map_to_odom_roll")
     initial_map_to_odom_pitch = LaunchConfiguration("initial_map_to_odom_pitch")
     initial_map_to_odom_yaw = LaunchConfiguration("initial_map_to_odom_yaw")
+    spawn_world_x = LaunchConfiguration("spawn_world_x")
+    spawn_world_y = LaunchConfiguration("spawn_world_y")
+    spawn_world_yaw = LaunchConfiguration("spawn_world_yaw")
     launch_small_gicp_relocalization = LaunchConfiguration(
         "launch_small_gicp_relocalization"
     )
@@ -145,7 +148,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "map_yaml",
             default_value=PathJoinSubstitution(
-                [FindPackageShare("ats_sentry_bringup"), "map", "rmuc_2025.yaml"]
+                [FindPackageShare("ats_sentry_bringup"), "map",
+                 PythonExpression(["'", world, "' + '.yaml'"])]
             ),
             description=(
                 "Static planning map YAML. The PGM is resolved from its 'image' "
@@ -293,7 +297,9 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             "initial_map_to_odom_x",
-            default_value="1.17",
+            default_value=PythonExpression(
+                ["'0.0' if '", world, "' == 'rmuc_2027' else '1.17'"]
+            ),
             description=(
                 "Gazebo-only initial map->odom x [m]. For rmuc_2025 this is "
                 "the robot spawn x plus the PGM origin x; it registers the "
@@ -303,7 +309,9 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             "initial_map_to_odom_y",
-            default_value="-0.44",
+            default_value=PythonExpression(
+                ["'0.0' if '", world, "' == 'rmuc_2027' else '-0.44'"]
+            ),
             description=(
                 "Gazebo-only initial map->odom y [m]. For rmuc_2025 this is "
                 "the robot spawn y plus the PGM origin y."
@@ -313,6 +321,27 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("initial_map_to_odom_roll", default_value="0.0"),
         DeclareLaunchArgument("initial_map_to_odom_pitch", default_value="0.0"),
         DeclareLaunchArgument("initial_map_to_odom_yaw", default_value="0.0"),
+        DeclareLaunchArgument(
+            "spawn_world_x",
+            default_value=PythonExpression(
+                ["'13.40' if '", world, "' == 'rmuc_2027' else '4.75'"]
+            ),
+            description="World spawn x used to normalize GT odometry; must match gz_world.yaml",
+        ),
+        DeclareLaunchArgument(
+            "spawn_world_y",
+            default_value=PythonExpression(
+                ["'2.00' if '", world, "' == 'rmuc_2027' else '9.00'"]
+            ),
+            description="World spawn y used to normalize GT odometry; must match gz_world.yaml",
+        ),
+        DeclareLaunchArgument(
+            "spawn_world_yaw",
+            default_value=PythonExpression(
+                ["'0.0' if '", world, "' == 'rmuc_2027' else '0.0'"]
+            ),
+            description="World spawn yaw used to normalize GT odometry",
+        ),
         DeclareLaunchArgument("use_rviz", default_value="false"),
         DeclareLaunchArgument(
             "use_viewer",
@@ -709,9 +738,9 @@ def generate_launch_description() -> LaunchDescription:
                 "output_odom_topic": "/odometry",
                 "odom_frame": "odom",
                 "base_frame": "gimbal_yaw_odom",
-                "spawn_world_x": 4.75,
-                "spawn_world_y": 9.00,
-                "spawn_world_yaw": 0.0,
+                "spawn_world_x": ParameterValue(spawn_world_x, value_type=float),
+                "spawn_world_y": ParameterValue(spawn_world_y, value_type=float),
+                "spawn_world_yaw": ParameterValue(spawn_world_yaw, value_type=float),
                 "publish_tf": True,
             }
         ],

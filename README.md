@@ -6,7 +6,7 @@ rmu_gazebo_simulator 是基于 Gazebo (Ignition 字母版本) 的仿真环境，
 
 目前 rmu_gazebo_simulator 提供以下功能：
 
-- rmul_2024, rmuc_2024, rmul_2025, rmuc_2025 仿真世界模型
+- rmul_2024, rmuc_2024, rmul_2025, rmuc_2025，以及 RMUC 2027 隧道世界模型
 
 - 网页端局域网联机对战
 
@@ -151,11 +151,31 @@ python3 src/rmu_gazebo_simulator/rmu_gazebo_simulator/scripts/referee_web/main.p
 
 #### 2.3.3 切换仿真世界
 
-`bringup_sim.launch.py` 读取 [gz_world.yaml](./rmu_gazebo_simulator/config/gz_world.yaml) 中的 `world`（当前为 `rmuc_2025`）。当前可选: `rmul_2024`, `rmuc_2024`, `rmul_2025`, `rmuc_2025`。出生位姿取自同一文件 `robots.<world>` 条目。
+`bringup_sim.launch.py` 读取 [gz_world.yaml](./rmu_gazebo_simulator/config/gz_world.yaml) 中的 `world`（默认 `rmuc_2025`）。导航回归也可使用 `rmuc_2027`，其 world、模型和顶板资源由本包提供。出生位姿取自同一文件 `robots.<world>` 条目。
 
-`ats_gazebo_nav.launch.py` 不读取该文件中的 `world`，而是使用 launch 参数 `world`（默认 `rmuc_2025`），出生位姿仍取自 gz_world.yaml。
+`ats_gazebo_nav.launch.py` 不读取该文件中的 `world`，而是使用 launch 参数 `world`；2027 回归推荐直接使用 `rmuc_2027_gazebo.launch.py`。
 
-### 2.4 ATS 导航闭环入口
+### 2.4 RMUC 2027 隧道入口
+
+```sh
+ROS_DOMAIN_ID=123 PLANNING_GRID_OWNER=rog_map P2_FAULT_CASE=none \
+  TEST_PROFILE=tunnel_2027 TUNNEL=tunnel_B \
+  USE_DIRECT_GAZEBO_LIDAR_BRIDGE=true \
+  scripts/test_gazebo_minco_mpc_chain.sh
+```
+
+`rmuc_2027_gazebo.launch.py` 使用新 world、RMUC 2027 机器人/顶板模型和
+`rviz/ats_gazebo_nav.rviz`，显示方式与 MuJoCo 的地图、路径、MPC 和机器人模型诊断视图一致。
+本机实测启动 world、机器人、ROGMap 和 action server 成功，但出现
+`libEGL ... failed to create dri2 screen`，`/registered_scan` 无消息，relay 成功数为 `0`；
+因此 Gazebo 完整导航闭环被 GPU/EGL 环境阻断，不能写成通过。
+
+如果日志同时出现 `【重定位状态拒绝】localization status stamp is not increasing`，首要检查
+`/registered_scan` 是否有消息以及 `/clock` 是否持续递增。该状态门是 fail-closed：点云渲染/仿真时钟
+未恢复前，不能通过放宽 GICP 阈值或关闭时间单调检查来“修复”重定位。ROS domain 应使用 `0..232`，
+并优先使用 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` 的隔离 domain。
+
+### 2.5 ATS 导航闭环入口
 
 ```sh
 ros2 launch rmu_gazebo_simulator ats_gazebo_nav.launch.py use_rviz:=true

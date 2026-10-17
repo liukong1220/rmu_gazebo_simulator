@@ -436,7 +436,9 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             "use_direct_gazebo_lidar_bridge",
-            default_value="false",
+            default_value=PythonExpression(
+                ["'true' if '", world, "' == 'rmuc_2027' else 'false'"]
+            ),
             description=(
                 "Replace only the Mid360 generic GZ-to-ROS mapping with the "
                 "dedicated BEST_EFFORT direct bridge."

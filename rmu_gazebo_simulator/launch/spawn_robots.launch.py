@@ -189,6 +189,7 @@ def launch_setup(context: LaunchContext) -> list:
             source_file=bridge_config,
             replacements={
                 "<robot_name>": robot["name"],
+                "<world_name>": selected_world,
                 "<direct_gazebo_lidar_bridge_prefix>": (
                     "#" if use_direct_gazebo_lidar_bridge else ""
                 ),
@@ -272,7 +273,7 @@ def launch_setup(context: LaunchContext) -> list:
                 {
                     "use_sim_time": use_sim_time,
                     "gazebo_lidar_topic": (
-                        f"/world/default/model/{robot['name']}/link/front_mid360/"
+                        f"/world/{selected_world}/model/{robot['name']}/link/front_mid360/"
                         "sensor/front_mid360_lidar/scan/points"
                     ),
                     "ros_lidar_topic": f"/{robot['name']}/livox/lidar",
@@ -288,7 +289,7 @@ def launch_setup(context: LaunchContext) -> list:
                 "ign",
                 "service",
                 "-s",
-                "/world/default/level/set_performer",
+                f"/world/{selected_world}/level/set_performer",
                 "--reqtype",
                 "ignition.msgs.StringMsg",
                 "--reptype",

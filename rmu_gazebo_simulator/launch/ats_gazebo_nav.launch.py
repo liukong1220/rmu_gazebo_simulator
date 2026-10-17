@@ -298,23 +298,25 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "initial_map_to_odom_x",
             default_value=PythonExpression(
-                ["'0.0' if '", world, "' == 'rmuc_2027' else '1.17'"]
+                ["'13.40' if '", world, "' == 'rmuc_2027' else '1.17'"]
             ),
             description=(
                 "Gazebo-only initial map->odom x [m]. For rmuc_2025 this is "
                 "the robot spawn x plus the PGM origin x; it registers the "
                 "static map to Point-LIO's local odom without ground-truth input. "
-                "Tracks the rmuc_2025 spawn (4.75, 9.00) in gz_world.yaml."
+                "For rmuc_2027 the PCD/world origin is the field corner and GT odom "
+                "is spawn-normalized, so this tracks spawn x=13.40."
             ),
         ),
         DeclareLaunchArgument(
             "initial_map_to_odom_y",
             default_value=PythonExpression(
-                ["'0.0' if '", world, "' == 'rmuc_2027' else '-0.44'"]
+                ["'2.00' if '", world, "' == 'rmuc_2027' else '-0.44'"]
             ),
             description=(
                 "Gazebo-only initial map->odom y [m]. For rmuc_2025 this is "
-                "the robot spawn y plus the PGM origin y."
+                "the robot spawn y plus the PGM origin y; rmuc_2027 uses the "
+                "spawn-normalized GT odom offset y=2.00."
             ),
         ),
         DeclareLaunchArgument("initial_map_to_odom_z", default_value="0.0"),
@@ -494,17 +496,16 @@ def generate_launch_description() -> LaunchDescription:
             default_value=os.path.join(pkg_simulator, "rviz", "ats_gazebo_nav.rviz"),
         ),
         DeclareLaunchArgument("log_level", default_value="info"),
-        # Livox mounting pose on the big-yaw frame. Must stay numerically equal
-        # to the xmacro block in ats_sentry_robot.sdf.xmacro, otherwise the
-        # point cloud and the TF tree disagree.
-        # Current xmacro mount: "-0.1 0.245 0.325 ${75*pi/180} 0 -${161*pi/180}".
-        DeclareLaunchArgument("lidar_static_tf_x", default_value="-0.1"),
-        DeclareLaunchArgument("lidar_static_tf_y", default_value="0.245"),
-        DeclareLaunchArgument("lidar_static_tf_z", default_value="0.325"),
-        DeclareLaunchArgument("lidar_static_tf_roll", default_value="1.3089969389957472"),
+        # Gazebo's generated ats_sentry_robot.sdf.xmacro mounts the simulated
+        # lidar link at (-0.20, 0, 0) with yaw=-61 deg. These defaults are
+        # simulation geometry, not the real-robot calibrated Mid360 extrinsic.
+        DeclareLaunchArgument("lidar_static_tf_x", default_value="-0.2"),
+        DeclareLaunchArgument("lidar_static_tf_y", default_value="0.0"),
+        DeclareLaunchArgument("lidar_static_tf_z", default_value="0.0"),
+        DeclareLaunchArgument("lidar_static_tf_roll", default_value="0.0"),
         DeclareLaunchArgument("lidar_static_tf_pitch", default_value="0.0"),
         DeclareLaunchArgument(
-            "lidar_static_tf_yaw", default_value="-2.8099800957108707"
+            "lidar_static_tf_yaw", default_value="-1.064650843716541"
         ),
     ]
 
@@ -900,7 +901,12 @@ def generate_launch_description() -> LaunchDescription:
                         # ~linear in source points, so this sets candidate throughput);
                         # only the best few screened candidates pay for a full-density
                         # fine pass, which is the sole acceptance authority.
-                        'multi_guess.time_budget_s': 1.5,
+                        # Keep a bounded async sweep, but leave enough wall time
+                        # after coarse screening for at least one fine alignment.
+                        # The previous 1.5 s budget exhausted during screening
+                        # (refined=0), so no candidate could ever be accepted.
+                        'multi_guess.time_budget_s': 3.0,
+                        'multi_guess.fine_time_reserve_s': 1.0,
                         'multi_guess.max_candidates_per_scan': 48,
                         'multi_guess.screen_leaf_size': 0.70,
                         'multi_guess.max_fine_per_scan': 4,

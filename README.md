@@ -166,14 +166,15 @@ ROS_DOMAIN_ID=123 PLANNING_GRID_OWNER=rog_map P2_FAULT_CASE=none \
 
 `rmuc_2027_gazebo.launch.py` 使用新 world、RMUC 2027 机器人/顶板模型和
 `rviz/ats_gazebo_nav.rviz`，显示方式与 MuJoCo 的地图、路径、MPC 和机器人模型诊断视图一致。
-本机实测启动 world、机器人、ROGMap 和 action server 成功，但出现
-`libEGL ... failed to create dri2 screen`，`/registered_scan` 无消息，relay 成功数为 `0`；
-因此 Gazebo 完整导航闭环被 GPU/EGL 环境阻断，不能写成通过。
+headless 启动在配置 NVIDIA EGL vendor 和 `EGL_PLATFORM=surfaceless` 后可运行 world、机器人、ROGMap、
+action server、direct LiDAR bridge 与 `/registered_scan` relay。无可用 EGL/GPU 时仍保持 fail-closed，
+不能把节点启动成功写成导航闭环通过。
 
 如果日志同时出现 `【重定位状态拒绝】localization status stamp is not increasing`，首要检查
-`/registered_scan` 是否有消息以及 `/clock` 是否持续递增。该状态门是 fail-closed：点云渲染/仿真时钟
-未恢复前，不能通过放宽 GICP 阈值或关闭时间单调检查来“修复”重定位。ROS domain 应使用 `0..232`，
-并优先使用 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` 的隔离 domain。
+`/registered_scan` 是否有消息以及 `/clock` 是否持续递增。fusion 现在保证同一仿真时钟 tick 内连续
+状态发布仍严格递增；该状态门仍是 fail-closed，不能通过放宽 GICP 阈值或关闭时间单调检查来“修复”
+重定位。ROS domain 应使用 `0..232`，并优先使用 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` 的隔离 domain。
+Gazebo 2027 的仿真静态 TF 必须使用 `(-0.20,0,0,0,0,-61°)`，与实机外参分开。
 
 ### 2.5 ATS 导航闭环入口
 

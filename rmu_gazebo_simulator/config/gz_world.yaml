@@ -65,3 +65,13 @@ robots:
     #   y_pose: "6.45"
     #   z_pose: "0.28"
     #   yaw: "3.14"
+
+  rmuc_2027:
+    - name: "red_standard_robot1"
+      color: "red"
+      # The 2027 PGM and Gazebo world share the map frame origin.  The
+      # tunnel_B entry is therefore the same pose used by the MuJoCo profile.
+      x_pose: "13.40"
+      y_pose: "2.00"
+      z_pose: "0.20"
+      yaw: "0.0"

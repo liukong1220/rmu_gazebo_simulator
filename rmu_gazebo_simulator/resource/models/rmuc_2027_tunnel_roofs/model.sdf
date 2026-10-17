@@ -1,0 +1,27 @@
+<?xml version='1.0'?>
+<sdf version='1.7'>
+  <model name='rmuc_2027_tunnel_roofs'>
+    <static>true</static>
+    <link name='roofs'>
+      <!-- Values are full box lengths, unlike MuJoCo's half-extents. -->
+      <collision name='roof_tunnel_B'>
+        <pose>14.75 2.00 0.425 0 0 0</pose>
+        <geometry><box><size>1.50 1.20 0.05</size></box></geometry>
+      </collision>
+      <visual name='roof_tunnel_B_visual'>
+        <pose>14.75 2.00 0.425 0 0 0</pose>
+        <geometry><box><size>1.50 1.20 0.05</size></box></geometry>
+        <material><ambient>0.08 0.24 0.42 0.35</ambient><diffuse>0.08 0.24 0.42 0.35</diffuse></material>
+      </visual>
+      <collision name='roof_tunnel_B_mirror'>
+        <pose>13.25 14.00 0.425 0 0 0</pose>
+        <geometry><box><size>1.50 1.20 0.05</size></box></geometry>
+      </collision>
+      <visual name='roof_tunnel_B_mirror_visual'>
+        <pose>13.25 14.00 0.425 0 0 0</pose>
+        <geometry><box><size>1.50 1.20 0.05</size></box></geometry>
+        <material><ambient>0.08 0.24 0.42 0.35</ambient><diffuse>0.08 0.24 0.42 0.35</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

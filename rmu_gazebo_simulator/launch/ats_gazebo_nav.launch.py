@@ -630,7 +630,6 @@ def generate_launch_description() -> LaunchDescription:
                 # map and turns the robot's start cell into terrain obstacle.
                 # Keep this override local to the simulation profile.
                 "mapping.gravity": [0.0, 0.0, -9.81],
-                "mapping.gravity_init": [0.0, 0.0, -9.81],
                 # The Gazebo IMU reports acceleration in m/s^2: a stationary
                 # measurement of this sensor is (0, 0, 9.8), not (0, 0, 1.0) g.
                 # The root parameter file declares g units (acc_norm 1.0) with a
@@ -658,8 +657,6 @@ def generate_launch_description() -> LaunchDescription:
                     0.0,
                     1.0,
                 ],
-                "prior_pcd.enable": False,
-                "prior_pcd.prior_pcd_map_path": "",
             },
         ],
         arguments=["--ros-args", "--log-level", log_level],

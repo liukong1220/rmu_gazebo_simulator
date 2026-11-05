@@ -43,10 +43,10 @@ def generate_launch_description() -> LaunchDescription:
         "world": "rmuc_2027",
         "map_yaml": PathJoinSubstitution([bringup_share, "map", "rmuc_2027.yaml"]),
         "prior_pcd_file": PathJoinSubstitution([bringup_share, "pcd", "rmuc_2027.pcd"]),
-        "initial_map_to_odom_x": "0.0",
-        "initial_map_to_odom_y": "0.0",
-        "initial_map_to_odom_z": "0.0",
-        "initial_map_to_odom_yaw": "0.0",
+        # Robot spawns at the tunnel_B entry (13.40, 2.00) in the map frame and GT
+        # odom is spawn-normalized, so ats_gazebo_nav's rmuc_2027 defaults for
+        # initial_map_to_odom_x/y (13.40/2.00) must be kept. A 0.0 prior makes
+        # GICP relocalization search around the field corner and never track.
         "robot_name": "red_standard_robot1",
         "rviz_config_file": PathJoinSubstitution(
             [simulator_share, "rviz", "ats_gazebo_nav.rviz"]

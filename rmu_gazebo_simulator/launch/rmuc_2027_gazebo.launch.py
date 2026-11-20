@@ -23,7 +23,6 @@ def generate_launch_description() -> LaunchDescription:
         "use_direct_gazebo_lidar_bridge",
         "enable_camera_sensors",
         "solver_mode",
-        "enable_test_fault_injection",
     )
     declarations = [DeclareLaunchArgument(name, default_value=value) for name, value in (
         ("headless", "true"),
@@ -36,7 +35,6 @@ def generate_launch_description() -> LaunchDescription:
         ("use_direct_gazebo_lidar_bridge", "true"),
         ("enable_camera_sensors", "false"),
         ("solver_mode", "ilqr"),
-        ("enable_test_fault_injection", "false"),
     )]
 
     arguments = {

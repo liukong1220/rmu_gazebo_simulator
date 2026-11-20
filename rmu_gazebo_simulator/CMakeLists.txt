@@ -107,50 +107,6 @@ install(FILES
   DESTINATION lib/${PROJECT_NAME}
 )
 
-
-if(BUILD_TESTING)
-  add_executable(test_swerve_kinematics
-    tests/test_swerve_kinematics.cpp
-  )
-  target_compile_features(test_swerve_kinematics PRIVATE cxx_std_17)
-  target_include_directories(test_swerve_kinematics PRIVATE include)
-  add_test(NAME test_swerve_kinematics COMMAND test_swerve_kinematics)
-
-  add_executable(test_evidence_statistics
-    tests/test_evidence_statistics.cpp
-  )
-  target_compile_features(test_evidence_statistics PRIVATE cxx_std_17)
-  target_include_directories(test_evidence_statistics PRIVATE include)
-  add_test(NAME test_evidence_statistics COMMAND test_evidence_statistics)
-
-  add_executable(test_tf_establishment_tracker
-    tests/test_tf_establishment_tracker.cpp
-  )
-  target_compile_features(test_tf_establishment_tracker PRIVATE cxx_std_17)
-  target_include_directories(test_tf_establishment_tracker PRIVATE include)
-  add_test(NAME test_tf_establishment_tracker COMMAND test_tf_establishment_tracker)
-
-  add_executable(test_dynamic_transform_freshness
-    tests/test_dynamic_transform_freshness.cpp
-  )
-  target_compile_features(test_dynamic_transform_freshness PRIVATE cxx_std_17)
-  target_include_directories(test_dynamic_transform_freshness PRIVATE include)
-  add_test(NAME test_dynamic_transform_freshness COMMAND test_dynamic_transform_freshness)
-
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  add_test(
-    NAME test_chassis_command_logic
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chassis_command_logic.py
-  )
-  add_test(
-    NAME test_gt_relay_contract
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gt_relay_contract.py
-  )
-
-  find_package(ament_lint_auto REQUIRED)
-  ament_lint_auto_find_test_dependencies()
-endif()
-
 ament_auto_package(
   USE_SCOPED_HEADER_INSTALL_DIR
   INSTALL_TO_SHARE

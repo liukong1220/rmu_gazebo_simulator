@@ -320,7 +320,7 @@ def generate_launch_description():
     ld.add_action(
         DeclareLaunchArgument(
             "world",
-            default_value="rmuc_2025",
+            default_value="rmuc_2027",
             description="Name of the Gazebo world whose spawn entry is used",
         )
     )

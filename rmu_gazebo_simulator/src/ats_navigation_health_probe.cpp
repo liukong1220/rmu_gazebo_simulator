@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// A one-shot, read-only health witness for scripts/test_gazebo_minco_mpc_chain.sh.
+// A one-shot, read-only health witness for the Gazebo ATS navigation stack.
 // It must not publish a control, map, TF, or status topic.  Wall time is
 // intentional: a paused/reset simulation clock must not make a test deadline
 // appear to pass or expire spuriously.

@@ -151,14 +151,13 @@ python3 src/rmu_gazebo_simulator/rmu_gazebo_simulator/scripts/referee_web/main.p
 
 #### 2.3.3 切换仿真世界
 
-`bringup_sim.launch.py` 读取 [gz_world.yaml](./rmu_gazebo_simulator/config/gz_world.yaml) 中的 `world`（默认 `rmuc_2025`）。导航回归也可使用 `rmuc_2027`，其 world、模型和顶板资源由本包提供。出生位姿取自同一文件 `robots.<world>` 条目。
+`bringup_sim.launch.py` 读取 [gz_world.yaml](./rmu_gazebo_simulator/config/gz_world.yaml) 中的 `world`（默认 `rmuc_2027`）。其 world、模型和顶板资源由本包提供，出生位姿取自同一文件 `robots.<world>` 条目。
 
-`ats_gazebo_nav.launch.py` 不读取该文件中的 `world`，而是使用 launch 参数 `world`。ATS 2027 导航测试建议直接使用下面的 `ats_gazebo_nav.launch.py world:=rmuc_2027` 命令，确保地图、先验 PCD、出生位姿和 `map->odom` 参数来自同一 world。
+`ats_gazebo_nav.launch.py` 不读取该文件中的 `world`，而是使用 launch 参数 `world`（默认 `rmuc_2027`）。ATS 2027 导航验证直接使用 `ats_gazebo_nav.launch.py world:=rmuc_2027`，确保地图、先验 PCD、出生位姿和 `map->odom` 参数来自同一 world。
 
 日常直接启动（RViz + headless Gazebo）：
 
 ```sh
-cd /home/ats/ATS_2026_snetry_test
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch rmu_gazebo_simulator ats_gazebo_nav.launch.py \
@@ -175,7 +174,7 @@ ros2 launch rmu_gazebo_simulator ats_gazebo_nav.launch.py \
   headless:=false use_viewer:=true use_rviz:=true
 ```
 
-只验证点云和重定位时，使用隔离 domain，并关闭规划链：
+只验证点云和重定位时，在当前 shell 自行选择隔离的 `ROS_DOMAIN_ID`（文档不固定 domain 编号或 DDS 配置文件），并关闭规划链：
 
 ```sh
 export DISPLAY=:0
@@ -184,13 +183,12 @@ export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.js
 export __NV_PRIME_RENDER_OFFLOAD=1
 export __GLX_VENDOR_LIBRARY_NAME=nvidia
 
-ROS_DOMAIN_ID=232 RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_LOCALHOST_ONLY=1 \
 ros2 launch rmu_gazebo_simulator ats_gazebo_nav.launch.py \
   world:=rmuc_2027 use_sim_time:=true \
   headless:=true headless_rendering:=true use_viewer:=false use_rviz:=false \
   enable_camera_sensors:=false use_gazebo_gt_odometry:=true \
   launch_planning:=false launch_small_gicp_relocalization:=true \
-  prior_pcd_file:=/home/ats/ATS_2026_snetry_test/src/ats_sentry_bringup/pcd/rmuc_2027.pcd
+  prior_pcd_file:="$PWD/src/ats_sentry_bringup/pcd/rmuc_2027.pcd"
 ```
 
 验证窗口内应能看到 `/registered_scan`、`relocalization_observation=accepted` 和定位状态 `CONFIRMED`。如果 EGL vendor 文件不存在或 GPU 不可用，Gazebo 仍会 fail-closed，不能将节点启动成功当作点云或导航闭环通过。
@@ -198,10 +196,9 @@ ros2 launch rmu_gazebo_simulator ats_gazebo_nav.launch.py \
 ### 2.4 RMUC 2027 隧道入口
 
 ```sh
-ROS_DOMAIN_ID=123 PLANNING_GRID_OWNER=rog_map P2_FAULT_CASE=none \
-  TEST_PROFILE=tunnel_2027 TUNNEL=tunnel_B \
-  USE_DIRECT_GAZEBO_LIDAR_BRIDGE=true \
-  scripts/test_gazebo_minco_mpc_chain.sh
+ros2 launch rmu_gazebo_simulator rmuc_2027_gazebo.launch.py \
+  use_gazebo_gt_odometry:=true \
+  use_rviz:=false
 ```
 
 `rmuc_2027_gazebo.launch.py` 使用新 world、RMUC 2027 机器人/顶板模型和
@@ -213,7 +210,7 @@ action server、direct LiDAR bridge 与 `/registered_scan` relay。无可用 EGL
 如果日志同时出现 `【重定位状态拒绝】localization status stamp is not increasing`，首要检查
 `/registered_scan` 是否有消息以及 `/clock` 是否持续递增。fusion 现在保证同一仿真时钟 tick 内连续
 状态发布仍严格递增；该状态门仍是 fail-closed，不能通过放宽 GICP 阈值或关闭时间单调检查来“修复”
-重定位。ROS domain 应使用 `0..232`，并优先使用 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` 的隔离 domain。
+重定位。`ROS_DOMAIN_ID` 与 RMW/DDS 配置由使用者按本机网络自行设置，不在文档中固定。
 Gazebo 2027 的仿真静态 TF 必须使用 `(-0.20,0,0,0,0,-61°)`，与实机外参分开。
 
 ### 2.5 ATS 导航闭环入口
@@ -243,9 +240,9 @@ TF 相关：
 
 | 参数 | 默认值 | 说明 |
 | :--- | :--- | :--- |
-| `world` | `rmuc_2025` | 解析为 `resource/worlds/<world>_world.sdf`；`world_sdf_path` 可显式指定 |
+| `world` | `rmuc_2027` | 解析为 `resource/worlds/<world>_world.sdf`；`world_sdf_path` 可显式指定 |
 | `params_file` | `ats_sentry_bringup/params/node_params.yaml` | 根仓导航参数 |
-| `map_yaml` | `ats_sentry_bringup/map/rmuc_2025.yaml` | 静态规划地图 |
+| `map_yaml` | `ats_sentry_bringup/map/rmuc_2027.yaml` | 静态规划地图 |
 | `use_gazebo_gt_odometry` | `true` | 用 `/<robot>/gimbal_odometry_gt` 中继 `/odometry` 与 `/registered_scan`，不启动 Point-LIO/loam_interface；`false` 走 LIO 链 |
 | `launch_small_gicp_relocalization` | `true` | 先验地图 GICP 重定位，需要 `prior_pcd_file`（默认 `ats_sentry_bringup/pcd/<world>.pcd`，缺失时启动失败） |
 | `launch_planning` | `true` | 启动 ROGMap、adapter、goal manager、MINCO、MPC、arbiter、底盘 adapter |

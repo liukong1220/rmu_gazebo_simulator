@@ -98,7 +98,6 @@ def generate_launch_description() -> LaunchDescription:
     point_lio_scan_line = LaunchConfiguration("point_lio_scan_line")
     livox_update_rate_hz = LaunchConfiguration("livox_update_rate_hz")
     use_rviz = LaunchConfiguration("use_rviz")
-    enable_test_fault_injection = LaunchConfiguration("enable_test_fault_injection")
     require_gimbal_status = LaunchConfiguration("require_gimbal_status")
     projection_rate_hz = LaunchConfiguration("projection_rate_hz")
     initial_map_to_odom_x = LaunchConfiguration("initial_map_to_odom_x")
@@ -135,7 +134,7 @@ def generate_launch_description() -> LaunchDescription:
     declarations = [
         DeclareLaunchArgument(
             "world",
-            default_value="rmuc_2025",
+            default_value="rmuc_2027",
             description="Gazebo world name; resolves resource/worlds/<world>_world.sdf",
         ),
         DeclareLaunchArgument(
@@ -416,14 +415,6 @@ def generate_launch_description() -> LaunchDescription:
                 "Keep the controlled 0.2 Hz default so a MINCO candidate can "
                 "commit against one immutable snapshot before the next update; "
                 "the five-second planning-snapshot lease remains fail-closed."
-            ),
-        ),
-        DeclareLaunchArgument(
-            "enable_test_fault_injection",
-            default_value="false",
-            description=(
-                "Startup-only authorization for ROGMap/adapter fault fixtures. "
-                "Only an isolated fault run may set it true."
             ),
         ),
         DeclareLaunchArgument(
@@ -1075,47 +1066,12 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[params_file, {"use_sim_time": use_sim_time}],
     )
 
+    # One process: /ats_rog_map and the in-process planning-map owner (/ats_rog_map_adapter).
+    # Omit name= so launch_ros applies the override dict under '/**' to both nodes while
+    # params_file stays keyed by node name.
     rog_map = Node(
         package="ats_rog_map",
         executable="ats_rog_map_node",
-        name="ats_rog_map",
-        output="screen",
-        parameters=[
-            params_file,
-            {
-                "use_sim_time": use_sim_time,
-                "enable_test_fault_injection": ParameterValue(
-                    enable_test_fault_injection, value_type=bool
-                ),
-                # Domain 231: west corridor mouth stays ego_clear=0 / occupied
-                # under default inflation_step=2 (0.20 m). Measured RMUC band
-                # only clears ~0.30 m near walls; Gazebo Point-LIO hits inflate
-                # the mouth shut so mid-stitch never moves. Soften sim-only.
-                # Domain 140 / 126: step=1 preferred for west mouth geometry, but
-                # domain199 nominal south goal (1.17,-2.94) is free on static-only
-                # planning (~1.3 m clear) while live ROG+inflate marks the cell
-                # non-traversable (admission 165/165 fail, JPS goal occupied). The
-                # extra ~185 occupied cells vs static-only are ROG paint; zero
-                # inflation for GT Mid360 so static walls remain authoritative
-                # and lidar speckles do not seal the open south corridor.
-                "core.inflation_step": 0,
-                # Gazebo + Point-LIO under memory pressure: default 0.5s cloud/odom
-                # health TTLs mark projection stale (d24: ready0=143 mostly
-                # response.stale=1) and abort goals mid-track with waiting_for_map.
-                "cloud_timeout_sec": 5.0,
-                "odom_timeout_sec": 5.0,
-                # d20: Point-LIO divergence slid/wiped ROGMap; refuse recenters >10 m.
-                "core.map_sliding.max_recenter_jump": 10.0,
-            },
-        ],
-        arguments=["--ros-args", "--log-level", log_level],
-    )
-
-    rog_map_adapter = Node(
-        package="ats_rog_map_adapter",
-        executable="ats_rog_map_adapter_node",
-        name="ats_rog_map_adapter",
-        condition=rog_map_owned,
         output="screen",
         parameters=[
             params_file,
@@ -1123,27 +1079,17 @@ def generate_launch_description() -> LaunchDescription:
                 "use_sim_time": use_sim_time,
                 "planning_grid_owner": planning_grid_owner,
                 "require_localization_status": True,
-                # GT / headless Gazebo: allow planning when terrain_analysis is
-                # off or briefly unsynced; unknown terrain/slope placeholders
-                # keep static+ROGMap fusion fail-closed on real obstacles only.
                 "require_terrain_inputs": False,
-                "projection_snapshot_timeout_sec": 30.0,  # Gazebo load: avoid ready=0 flaps from 2–4s stale
-                # Domain199: Mid360 ground/near-field speckles in [0.10,0.80] fused
-                # onto the static-free south nominal goal. Raise the band so flat
-                # deck returns stay out of the ground-planning projection while
-                # walls (>=~0.2 m) still enter; matches mujoco adapter intent.
+                "projection_snapshot_timeout_sec": 30.0,
                 "projection_min_height": 0.20,
                 "projection_max_height": 0.80,
-                # Keep the simulation on the same controlled projection cadence
-                # as the real-vehicle profile.  A slower immutable snapshot
-                # publication gives MINCO enough time to finish and commit
-                # without weakening the exact map-sequence gate.
                 "projection_rate_hz": ParameterValue(
                     projection_rate_hz, value_type=float
                 ),
-                "enable_test_fault_injection": ParameterValue(
-                    enable_test_fault_injection, value_type=bool
-                ),
+                "core.inflation_step": 0,
+                "cloud_timeout_sec": 5.0,
+                "odom_timeout_sec": 5.0,
+                "core.map_sliding.max_recenter_jump": 10.0,
             },
         ],
         arguments=["--ros-args", "--log-level", log_level],
@@ -1415,7 +1361,6 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(LaunchConfiguration("launch_planning")),
         actions=[
             rog_map,
-            rog_map_adapter,
             goal_manager,
             minco,
             mpc,
